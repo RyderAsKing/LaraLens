@@ -208,6 +208,7 @@ export interface CallChainEdge {
   calleeMethod: string;
   type: CallChainType;
   visibility: string;
+  data?: Record<string, unknown>;
 }
 
 export interface ConsoleCommandDefinition {

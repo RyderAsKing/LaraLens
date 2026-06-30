@@ -54,7 +54,6 @@ export class GraphBuilder {
   private edgeCounter = 0;
 
   build(input: GraphBuilderInput): Graph {
-    this.addMiddlewareRegistry(input.middlewareRegistry);
     this.addRoutes(input.routes, input.middlewareRegistry);
     this.addControllers(input.controllers);
     this.addCallChain(input.callChain);
@@ -90,8 +89,10 @@ export class GraphBuilder {
   ): GraphNode {
     const existing = this.nodes.get(id);
     if (existing) {
-      // merge data (later writes win for new keys, but keep existing)
-      existing.data = { ...data, ...existing.data };
+      // Merge data without letting early placeholder null/undefined values hide
+      // richer analyzer data registered later (for example route-created
+      // controller/action placeholders later gaining file + line information).
+      existing.data = this.mergeNodeData(existing.data, data);
       return existing;
     }
     const node: GraphNode = { id, type, label, data: { ...data, accent: ACCENT_COLORS[type] ?? "#94a3b8" } };
@@ -119,35 +120,6 @@ export class GraphBuilder {
   }
 
   // -------------------------------------------------------------------------
-  // Middleware
-  // -------------------------------------------------------------------------
-
-  private addMiddlewareRegistry(registry: MiddlewareRegistry): void {
-    for (const [alias, fqcn] of Object.entries(registry.aliases)) {
-      this.addNode(`middleware::${fqcn}`, "middleware", this.shortName(fqcn), {
-        fqcn,
-        alias,
-        file: null,
-      });
-    }
-    for (const fqcn of registry.global) {
-      this.addNode(`middleware::${fqcn}`, "middleware", this.shortName(fqcn), {
-        fqcn,
-        file: null,
-      });
-    }
-    for (const [group, fqcns] of Object.entries(registry.groups)) {
-      for (const fqcn of fqcns) {
-        this.addNode(`middleware::${fqcn}`, "middleware", this.shortName(fqcn), {
-          fqcn,
-          group,
-          file: null,
-        });
-      }
-    }
-  }
-
-  // -------------------------------------------------------------------------
   // Routes + controllers + actions
   // -------------------------------------------------------------------------
 
@@ -163,14 +135,16 @@ export class GraphBuilder {
         security: { exposure: "unknown", riskLevel: "none", issues: [] },
       });
 
-      // route -> controller
+      let dispatchTargetId: string | null = null;
+
+      // controller/action dispatch target
       if (r.controller && r.action) {
         const controllerId = `controller::${r.controller}`;
         this.addNode(controllerId, "controller", this.shortName(r.controller), {
           fqcn: r.controller,
           file: null,
         });
-        this.addEdge(routeId, controllerId, "routes to", "route-to-controller");
+        dispatchTargetId = controllerId;
 
         const actionId = `action::${r.controller}::${r.action}`;
         this.addNode(actionId, "action", `${r.action}()`, {
@@ -184,13 +158,26 @@ export class GraphBuilder {
         this.addEdge(controllerId, actionId, "has method", "controller-to-action");
       }
 
-      // route -> middleware
+      // request pipeline: route -> middleware(s) -> controller/action.
+      // This keeps middleware between the route and what handles the request
+      // instead of rendering it as a side branch.
+      let previousId = routeId;
+      let middlewareCount = 0;
       for (const mw of r.middlewares) {
         const fqcn = registry.aliases[mw] ?? mw;
-        const mwId = `middleware::${fqcn}`;
-        if (this.nodes.has(mwId)) {
-          this.addEdge(routeId, mwId, "guarded by", "route-to-middleware");
-        }
+        const mwId = `middleware::${r.method}::${r.uri}::${middlewareCount}::${fqcn}`;
+        this.addNode(mwId, "middleware", this.shortName(fqcn), {
+          fqcn,
+          alias: mw === fqcn ? undefined : mw,
+          route: `${r.method} ${r.uri}`,
+          file: null,
+        });
+        this.addEdge(previousId, mwId, middlewareCount === 0 ? "passes through" : "then", "request-middleware");
+        previousId = mwId;
+        middlewareCount++;
+      }
+      if (dispatchTargetId) {
+        this.addEdge(previousId, dispatchTargetId, middlewareCount > 0 ? "continues to" : "routes to", "route-to-controller");
       }
     }
   }
@@ -224,11 +211,15 @@ export class GraphBuilder {
       }
       if (c.parent) {
         const parentId = `controller::${c.parent}`;
+        const child = this.nodes.get(controllerId);
+        if (child) {
+          child.data.extends = c.parent;
+          child.data.extendsTargetId = parentId;
+        }
         this.addNode(parentId, "controller", this.shortName(c.parent), {
           fqcn: c.parent,
           file: null,
         });
-        this.addEdge(controllerId, parentId, "extends", "controller-extends");
       }
     }
   }
@@ -283,20 +274,11 @@ export class GraphBuilder {
           targetId = `notification::${edge.calleeFqcn}`;
           label = "sends";
           break;
-        case "validation_request": {
-          // Validation requests are a property of the action, not a shared
-          // graph entity. Recording them on the caller node avoids creating a
-          // class-level node that would aggregate every action using the same
-          // Request class (e.g. 27 unrelated "validates with" incoming edges).
-          const callerNode = this.nodes.get(callerId);
-          if (callerNode) {
-            const existing = (callerNode.data.validates as string[] | undefined) ?? [];
-            if (!existing.includes(edge.calleeFqcn)) {
-              callerNode.data.validates = [...existing, edge.calleeFqcn];
-            }
-          }
-          continue;
-        }
+        case "validation_request":
+          targetType = "validation_request";
+          targetId = `validation_request::${edge.calleeFqcn}`;
+          label = "validates with";
+          break;
         case "enum":
           targetType = "enum";
           targetId = `enum::${edge.calleeFqcn}`;
@@ -333,7 +315,7 @@ export class GraphBuilder {
 
       if (!RELATIONSHIP_EDGE_TYPES.has(edge.type)) continue;
 
-      const data: Record<string, unknown> = { fqcn: edge.calleeFqcn };
+      const data: Record<string, unknown> = { fqcn: edge.calleeFqcn, ...(edge.data ?? {}) };
       if (edge.calleeMethod && targetType !== "model") {
         data.method = edge.calleeMethod;
       }
@@ -451,6 +433,18 @@ export class GraphBuilder {
   private shortName(fqcn: string): string {
     if (!fqcn) return "";
     return fqcn.split("\\").pop() ?? fqcn;
+  }
+
+  private mergeNodeData(
+    existing: Record<string, unknown>,
+    next: Record<string, unknown>
+  ): Record<string, unknown> {
+    const merged = { ...existing };
+    for (const [key, value] of Object.entries(next)) {
+      if (value === null || value === undefined) continue;
+      merged[key] = value;
+    }
+    return merged;
   }
 
   private labelFor(type: string, fqcn: string, method?: string): string {

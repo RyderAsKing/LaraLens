@@ -1,6 +1,6 @@
 "use client";
 
-import { memo } from "react";
+import { memo, type MouseEvent } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { ACCENT_COLORS, TYPE_LABELS, withAlpha } from "@/lib/graph";
 import type { NodeType } from "@/lib/types";
@@ -17,6 +17,14 @@ function NodeCardComponent({ data, selected }: NodeProps) {
   const d = data as unknown as LaraLensNodeData;
   const accent = d.accent ?? ACCENT_COLORS[d.nodeType] ?? "#7A7E85";
   const typeLabel = TYPE_LABELS[d.nodeType] ?? d.nodeType;
+  const extendsText = typeof d.extends === "string" ? d.extends : "";
+  const extendsTargetId = typeof d.extendsTargetId === "string" ? d.extendsTargetId : "";
+
+  const selectExtendsTarget = (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (!extendsTargetId) return;
+    window.dispatchEvent(new CustomEvent("laralens:select-node", { detail: extendsTargetId }));
+  };
 
   return (
     <div
@@ -41,6 +49,16 @@ function NodeCardComponent({ data, selected }: NodeProps) {
         <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-[var(--etch)]">
           {typeLabel}
         </span>
+        {extendsText ? (
+          <button
+            type="button"
+            onClick={selectExtendsTarget}
+            title={`Extends ${extendsText}${extendsTargetId ? " — click to inspect" : ""}`}
+            className="ml-auto rounded border border-[var(--chassis)] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-[var(--etch)] transition-colors hover:border-[var(--accent)] hover:text-[var(--flare)]"
+          >
+            extends
+          </button>
+        ) : null}
       </div>
       <div className="mt-2 truncate font-[family-name:var(--font-display)] text-[15px] font-medium tracking-[-0.01em] text-[var(--flare)]">
         {d.label}

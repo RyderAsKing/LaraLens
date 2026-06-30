@@ -1,6 +1,6 @@
 "use client";
 
-import { FolderOpen, Loader2, AlertCircle, Clock3 } from "lucide-react";
+import { FolderOpen, AlertCircle, Clock3, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export interface RecentProject {
@@ -54,7 +54,7 @@ export function EmptyState({
 
   return (
     <Shell>
-      <LensSweep />
+      <LensSweep icon="search" />
       <Title>Focus on your architecture</Title>
       <Subtitle>
         LaraLens parses routes, controllers, models, and call chains — then
@@ -134,32 +134,38 @@ function RecentProjects({
   );
 }
 
-/** Signature element: an animated lens-sweep ring. */
-function LensSweep() {
+/** Signature element: an animated lens-sweep ring, or a subtle search mark. */
+function LensSweep({ icon = "lens" }: { icon?: "lens" | "search" }) {
+  const isSearch = icon === "search";
+
   return (
-    <div className="lens-sweep h-16 w-16">
+    <div className={`${isSearch ? "search-mark" : "lens-sweep"} h-16 w-16`}>
       <div className="lens-sweep-inner flex h-full w-full items-center justify-center">
-        <svg
-          width="28"
-          height="28"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="text-[var(--aperture)]"
-        >
-          <circle cx="12" cy="12" r="3" />
-          <path d="M12 2v2" />
-          <path d="M12 20v2" />
-          <path d="m4.93 4.93 1.41 1.41" />
-          <path d="m17.66 17.66 1.41 1.41" />
-          <path d="M2 12h2" />
-          <path d="M20 12h2" />
-          <path d="m6.34 17.66-1.41 1.41" />
-          <path d="m19.07 4.93-1.41 1.41" />
-        </svg>
+        {isSearch ? (
+          <Search className="h-7 w-7 text-[var(--aperture)]" />
+        ) : (
+          <svg
+            width="28"
+            height="28"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="text-[var(--aperture)]"
+          >
+            <circle cx="12" cy="12" r="3" />
+            <path d="M12 2v2" />
+            <path d="M12 20v2" />
+            <path d="m4.93 4.93 1.41 1.41" />
+            <path d="m17.66 17.66 1.41 1.41" />
+            <path d="M2 12h2" />
+            <path d="M20 12h2" />
+            <path d="m6.34 17.66-1.41 1.41" />
+            <path d="m19.07 4.93-1.41 1.41" />
+          </svg>
+        )}
       </div>
     </div>
   );

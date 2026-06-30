@@ -49,6 +49,7 @@ interface TraceContext {
   visited: Set<string>;
   edges: CallChainEdge[];
   classFileCache: Map<string, { useMap: Map<string, string>; namespace: string } | null>;
+  formRequestCache: Map<string, Record<string, unknown> | undefined>;
 }
 
 export function traceCallChain(
@@ -65,6 +66,7 @@ export function traceCallChain(
     visited: new Set(),
     edges: [],
     classFileCache: new Map(),
+    formRequestCache: new Map(),
   };
 
   for (const controller of controllers.values()) {
@@ -96,6 +98,9 @@ export function traceCallChain(
         if (param.type && !isBuiltin(param.type)) {
           const resolved = resolveClassRef(param.type, controllerUseMap, controllerNs);
           depTypes.set(param.name, resolved);
+          if (classifyClass(resolved, ctx) === "validation_request") {
+            addEdge(ctx, controller.fqcn, method.name, resolved, "rules", "validation_request", analyzeFormRequest(resolved, ctx));
+          }
         }
       }
       traceMethod(controller.fqcn, method.name, method.body, depTypes, ctx, 0);
@@ -375,9 +380,73 @@ function addEdge(
   callerMethod: string,
   calleeFqcn: string,
   calleeMethod: string,
-  type: CallChainType
+  type: CallChainType,
+  data?: Record<string, unknown>
 ): void {
-  ctx.edges.push({ callerFqcn, callerMethod, calleeFqcn, calleeMethod, type, visibility: "public" });
+  ctx.edges.push({ callerFqcn, callerMethod, calleeFqcn, calleeMethod, type, visibility: "public", data });
+}
+
+function analyzeFormRequest(fqcn: string, ctx: TraceContext): Record<string, unknown> | undefined {
+  if (ctx.formRequestCache.has(fqcn)) return ctx.formRequestCache.get(fqcn);
+  const file = resolveFqcn(fqcn, ctx.psr4, ctx.devPsr4);
+  if (!file || !existsSync(file)) return undefined;
+  try {
+    const source = readFileSync(file, "utf8");
+    const ast = parsePhp(source, file);
+    if (!ast) return cacheFormRequest(ctx, fqcn, { file });
+    const classes = extractClasses(ast, file);
+    const cls = classes.find((c) => c.fqcn === fqcn || c.name === fqcn.split("\\").pop());
+    if (!cls) return cacheFormRequest(ctx, fqcn, { file });
+    const rulesMethod = cls.methods.find((m) => m.name === "rules" && m.body);
+    const fields: { name: string; rules: string[] }[] = [];
+    if (rulesMethod?.body) {
+      // Best-effort support for the common Laravel shape:
+      // return ['field' => 'required|string', 'tags' => ['array']];
+      // Dynamic rule builders are intentionally reported as code location only.
+      walkAst(rulesMethod.body, (node) => {
+        if ((node as { kind?: string })?.kind !== "return") return;
+        const expr = (node as { expr?: unknown }).expr;
+        if (!expr || typeof expr !== "object" || (expr as { kind?: string }).kind !== "array") return;
+        for (const item of ((expr as { items?: unknown[] }).items ?? [])) {
+          const entry = item as { key?: unknown; value?: unknown };
+          const name = literalString(entry.key);
+          if (!name) continue;
+          fields.push({ name, rules: ruleStrings(entry.value) });
+        }
+      });
+    }
+    return cacheFormRequest(ctx, fqcn, fields.length > 0 ? { file, fields } : { file });
+  } catch {
+    return cacheFormRequest(ctx, fqcn, { file });
+  }
+}
+
+function cacheFormRequest(ctx: TraceContext, fqcn: string, data: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  ctx.formRequestCache.set(fqcn, data);
+  return data;
+}
+
+function literalString(node: unknown): string | null {
+  if (!node) return null;
+  if (typeof node === "string") return node;
+  if (typeof node === "object") {
+    const value = (node as { value?: unknown }).value;
+    if (typeof value === "string") return value;
+  }
+  return null;
+}
+
+function ruleStrings(node: unknown): string[] {
+  const direct = literalString(node);
+  if (direct) return direct.split("|").filter(Boolean);
+  if (!node || typeof node !== "object" || (node as { kind?: string }).kind !== "array") return [];
+  const out: string[] = [];
+  for (const item of ((node as { items?: unknown[] }).items ?? [])) {
+    const value = (item as { value?: unknown }).value ?? item;
+    const rule = literalString(value);
+    if (rule) out.push(rule);
+  }
+  return out;
 }
 
 function getNs(ast: { root: unknown }): string {

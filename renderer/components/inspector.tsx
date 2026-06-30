@@ -1,10 +1,11 @@
 "use client";
 
 import { useId, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
+import { ChevronDown, ChevronRight, ExternalLink, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ACCENT_COLORS, TYPE_LABELS } from "@/lib/graph";
+import { nodeLocation } from "@/lib/node-location";
 import type { Graph, GraphEdge, GraphNode } from "@/lib/types";
 
 interface InspectorProps {
@@ -19,11 +20,12 @@ export function Inspector({ graph, selectedId }: InspectorProps) {
   );
 
   const relatedEdges = useMemo(() => {
-    if (!node) return { outgoing: [], incoming: [] };
+    if (!node) return { outgoing: [], incoming: [], referenced: [] };
     const visibleEdges = graph.edges.filter((edge) => !isHiddenInspectorEdge(edge));
     return {
       outgoing: visibleEdges.filter((e) => e.source === node.id),
       incoming: visibleEdges.filter((e) => e.target === node.id),
+      referenced: referencedRelationships(node, graph),
     };
   }, [graph, node]);
 
@@ -35,8 +37,10 @@ export function Inspector({ graph, selectedId }: InspectorProps) {
   if (!node) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-6 text-center">
-        <div className="lens-sweep h-10 w-10 opacity-40">
-          <div className="lens-sweep-inner h-full w-full" />
+        <div className="search-mark h-10 w-10">
+          <div className="lens-sweep-inner flex h-full w-full items-center justify-center">
+            <Search className="h-[18px] w-[18px] text-[var(--aperture)]" />
+          </div>
         </div>
         <p className="mt-3 text-sm text-[var(--etch)]">
           Select a node to inspect its details.
@@ -46,7 +50,7 @@ export function Inspector({ graph, selectedId }: InspectorProps) {
   }
 
   const accent = ACCENT_COLORS[node.type] ?? "#7A7E85";
-  const ownLocation = nodeLocation(node);
+  const ownLocation = nodeLocation(node, graph);
 
   const openOwnCode = async () => {
     if (!ownLocation?.file) return;
@@ -92,7 +96,7 @@ export function Inspector({ graph, selectedId }: InspectorProps) {
             <DataRow key={key} label={key} value={formatValue(value)} />
           ))}
 
-        {(relatedEdges.outgoing.length > 0 || relatedEdges.incoming.length > 0) && (
+        {(relatedEdges.outgoing.length > 0 || relatedEdges.incoming.length > 0 || relatedEdges.referenced.length > 0) && (
           <>
             <Separator className="my-4 bg-[var(--chassis)]" />
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--etch)]">
@@ -113,10 +117,75 @@ export function Inspector({ graph, selectedId }: InspectorProps) {
                 edges={relatedEdges.incoming}
                 nodesById={nodesById}
               />
+              <ReferencedSection references={relatedEdges.referenced} nodesById={nodesById} graph={graph} />
             </div>
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function ReferencedSection({
+  references,
+  nodesById,
+  graph,
+}: {
+  references: ReferencedRelationship[];
+  nodesById: Map<string, GraphNode>;
+  graph: Graph;
+}) {
+  const [open, setOpen] = useState(references.length > 0);
+  const contentId = useId();
+  if (references.length === 0) return null;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-2 py-1.5 text-left"
+        aria-expanded={open}
+        aria-controls={contentId}
+      >
+        <span className="text-xs font-semibold text-[var(--flare)]">Referenced</span>
+        <span className="h-px flex-1 bg-[var(--chassis)]" />
+        <span className="rounded-full border border-[var(--chassis)] px-1.5 py-0.5 text-[10px] text-[var(--etch)]">
+          {references.length}
+        </span>
+        {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[var(--etch)]" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--etch)]" />}
+      </button>
+      {open && (
+        <div id={contentId} className="space-y-1.5 pb-2">
+          {references.map((ref) => (
+            <ReferencedItem key={`${ref.label}-${ref.targetId ?? ref.value}`} reference={ref} node={ref.targetId ? nodesById.get(ref.targetId) : undefined} graph={graph} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReferencedItem({ reference, node, graph }: { reference: ReferencedRelationship; node?: GraphNode; graph: Graph }) {
+  const location = nodeLocation(node, graph);
+  const openCode = async () => {
+    if (!location?.file) return;
+    try {
+      await window.laralens.openCodeWindow(location.file, location.line);
+    } catch (error) {
+      console.error("Failed to open code window", error);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2 border-b border-[var(--chassis)]/70 py-1.5 last:border-b-0">
+      <Badge variant="secondary" className="shrink-0">{reference.label}</Badge>
+      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--flare)]" title={reference.value}>{node?.label ?? reference.value}</span>
+      {location?.file && (
+        <button type="button" onClick={openCode} className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--etch)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--flare)]" title={`Open ${location.file}${location.line ? `:${location.line}` : ""}`}>
+          <ExternalLink className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   );
 }
@@ -166,6 +235,7 @@ function RelationshipSection({
               kind={kind}
               edge={edge}
               otherNode={nodesById.get(kind === "out" ? edge.target : edge.source)}
+              graphNodesById={nodesById}
             />
           ))}
         </div>
@@ -178,15 +248,18 @@ function RelationshipItem({
   kind,
   edge,
   otherNode,
+  graphNodesById,
 }: {
   kind: "in" | "out";
   edge: GraphEdge;
   otherNode?: GraphNode;
+  graphNodesById: Map<string, GraphNode>;
 }) {
   const [open, setOpen] = useState(false);
   const contentId = useId();
   const other = otherNode?.label ?? (kind === "out" ? edge.target : edge.source);
-  const location = nodeLocation(otherNode);
+  const graph = graphFromNodeMap(graphNodesById);
+  const location = nodeLocation(otherNode, graph);
 
   const openCode = async () => {
     if (!location?.file) return;
@@ -269,16 +342,16 @@ function DataRow({ label, value, mono }: { label: string; value: string; mono?: 
   );
 }
 
-function nodeLocation(node?: GraphNode): { file: string; line?: number } | null {
-  const file = node?.data.file;
-  if (typeof file !== "string" || file.length === 0) return null;
-
-  const line = node?.data.line;
-  return { file, line: typeof line === "number" ? line : undefined };
+function isHiddenInspectorEdge(edge: GraphEdge): boolean {
+  return false;
 }
 
-function isHiddenInspectorEdge(edge: GraphEdge): boolean {
-  return edge.type === "action-to-validation_request";
+function graphFromNodeMap(nodesById: Map<string, GraphNode>): Graph {
+  return {
+    meta: { project: "", analyzedAt: "", nodeCount: nodesById.size, edgeCount: 0 },
+    nodes: [...nodesById.values()],
+    edges: [],
+  };
 }
 
 function relationshipLabel(edge: GraphEdge, kind: "in" | "out"): string {
@@ -288,8 +361,36 @@ function relationshipLabel(edge: GraphEdge, kind: "in" | "out"): string {
 }
 
 const INCOMING_RELATIONSHIP_LABELS: Record<string, string> = {
-  "route-to-middleware": "guards",
+  "request-middleware": "receives request from",
 };
+
+interface ReferencedRelationship {
+  label: string;
+  value: string;
+  targetId?: string;
+}
+
+function referencedRelationships(node: GraphNode, graph: Graph): ReferencedRelationship[] {
+  const refs: ReferencedRelationship[] = [];
+  const extendsValue = node.data.extends;
+  if (typeof extendsValue === "string" && extendsValue.length > 0) {
+    refs.push({
+      label: "extends",
+      value: extendsValue,
+      targetId: typeof node.data.extendsTargetId === "string" ? node.data.extendsTargetId : undefined,
+    });
+  }
+
+  const validates = node.data.validates;
+  if (Array.isArray(validates)) {
+    for (const fqcn of validates) {
+      if (typeof fqcn !== "string") continue;
+      const targetId = `validation_request::${fqcn}`;
+      refs.push({ label: "validates", value: fqcn, targetId: graph.nodes.some((n) => n.id === targetId) ? targetId : undefined });
+    }
+  }
+  return refs;
+}
 
 function formatValue(value: unknown): string {
   if (value === null || value === undefined) return "";

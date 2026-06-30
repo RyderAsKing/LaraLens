@@ -31,6 +31,8 @@ export type NodeType =
   | "filament_page_method"
   | "filament_widget"
   | "filament_relation_manager"
+  | "file"
+  | "method"
   | "lifecycle";
 
 export interface GraphNode {

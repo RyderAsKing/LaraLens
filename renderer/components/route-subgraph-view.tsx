@@ -17,7 +17,8 @@ import "@xyflow/react/dist/style.css";
 import { NodeCard, type LaraLensNodeData } from "./node-card";
 import { layoutHierarchyGraph } from "@/lib/layout";
 import { ACCENT_COLORS, nodeSubtitle } from "@/lib/graph";
-import { buildRouteSubgraph, subgraphSeedIds } from "@/lib/route-tree";
+import { buildRouteDevelopmentSubgraph, subgraphSeedIds } from "@/lib/route-tree";
+import { logMissingNodeLocation, nodeLocation } from "@/lib/node-location";
 import type { Graph, GraphNode } from "@/lib/types";
 
 const nodeTypes: NodeTypes = { laraNode: NodeCard };
@@ -38,7 +39,7 @@ function RouteSubgraphCanvas({
   onSelect,
 }: RouteSubgraphViewProps) {
   const subgraph = useMemo(
-    () => buildRouteSubgraph(graph, routeId, withLifecycle),
+    () => buildRouteDevelopmentSubgraph(graph, routeId, withLifecycle),
     [graph, routeId, withLifecycle]
   );
 
@@ -62,7 +63,7 @@ function RouteSubgraphCanvas({
           accent: ACCENT_COLORS[n.type],
           ...n.data,
         },
-        selected: n.id === selectedId,
+        selected: n.id === selectedId || n.data.originalNodeId === selectedId,
       })
     );
 
@@ -89,9 +90,43 @@ function RouteSubgraphCanvas({
     setEdges(edges);
   }, [laidOut, edges, setNodes, setEdges]);
 
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const id = (event as CustomEvent<string>).detail;
+      if (typeof id === "string" && id.length > 0) onSelect(id);
+    };
+    window.addEventListener("laralens:select-node", handler);
+    return () => window.removeEventListener("laralens:select-node", handler);
+  }, [onSelect]);
+
   const handleNodeClick = useCallback(
-    (_: React.MouseEvent, node: Node) => onSelect(node.id),
-    [onSelect]
+    (_: React.MouseEvent, node: Node) => {
+      const graphNode = subgraph.nodes.find((n) => n.id === node.id);
+      const originalNodeId = graphNode?.data.originalNodeId;
+      onSelect(typeof originalNodeId === "string" ? originalNodeId : node.id);
+    },
+    [onSelect, subgraph]
+  );
+
+  const handleNodeDoubleClick = useCallback(
+    async (_: React.MouseEvent, node: Node) => {
+      const graphNode = subgraph.nodes.find((n) => n.id === node.id);
+      const originalNodeId = graphNode?.data.originalNodeId;
+      const originalNode = typeof originalNodeId === "string"
+        ? graph.nodes.find((n) => n.id === originalNodeId)
+        : undefined;
+      const location = nodeLocation(graphNode, subgraph) ?? nodeLocation(originalNode, graph) ?? nodeLocation(graph.nodes.find((n) => n.id === node.id), graph);
+      if (!location) {
+        logMissingNodeLocation(graphNode ?? originalNode ?? graph.nodes.find((n) => n.id === node.id), graph, "graph node double-click");
+        return;
+      }
+      try {
+        await window.laralens.openCodeWindow(location.file, location.line);
+      } catch (error) {
+        console.error("Failed to open code window", error);
+      }
+    },
+    [graph, subgraph]
   );
 
   const handlePaneClick = useCallback(() => onSelect(null), [onSelect]);
@@ -106,6 +141,7 @@ function RouteSubgraphCanvas({
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={handleNodeClick}
+        onNodeDoubleClick={handleNodeDoubleClick}
         onPaneClick={handlePaneClick}
         nodeTypes={nodeTypes}
         fitView

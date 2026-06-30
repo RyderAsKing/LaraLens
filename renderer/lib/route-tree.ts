@@ -11,6 +11,7 @@
 
 import type { Graph, GraphEdge, GraphNode, NodeType } from "./types";
 import { buildLifecycleChain, LIFECYCLE_IDS } from "./lifecycle";
+import { nodeLocation } from "./node-location";
 
 /* -------------------------------------------------------------------------- */
 /* URI prefix tree (Route Explorer sidebar)                                   */
@@ -106,6 +107,8 @@ export interface DescendantTreeNode {
 /** Sort priority for descendant-tree children (controllers first, etc.). */
 const TYPE_PRIORITY: Record<NodeType, number> = {
   lifecycle: -1,
+  file: -1,
+  method: 0,
   controller: 0,
   middleware: 1,
   action: 2,
@@ -136,6 +139,21 @@ const TYPE_PRIORITY: Record<NodeType, number> = {
   route: 27,
 };
 
+const REFERENCE_ONLY_NODE_TYPES = new Set<NodeType>([
+  "model",
+  "enum",
+  "interface",
+  "trait",
+  "abstract_class",
+  "facade",
+]);
+
+const REFERENCE_ONLY_EDGE_TYPES = new Set([
+  "action-to-model",
+  "model-relationship",
+  "controller-extends",
+]);
+
 const MAX_DEPTH = 64;
 
 /**
@@ -150,6 +168,7 @@ export function buildRouteDescendantTree(
   graph: Graph,
   routeId: string
 ): DescendantTreeNode | null {
+  graph = normalizeRequestPipelineGraph(graph);
   const start = graph.nodes.find((n) => n.id === routeId);
   if (!start) return null;
 
@@ -208,6 +227,7 @@ export function buildRouteSubgraph(
   routeId: string,
   withLifecycle: boolean
 ): Graph {
+  graph = normalizeRequestPipelineGraph(graph);
   const tree = buildRouteDescendantTree(graph, routeId);
   if (!tree) {
     return { meta: graph.meta, nodes: [], edges: [] };
@@ -235,6 +255,319 @@ export function buildRouteSubgraph(
     nodes: [...chain.nodes, ...nodes],
     edges: [...chain.edges, ...edges],
   };
+}
+
+/**
+ * Build the graph view used for real project work: a route is shown as a
+ * file-by-file execution path instead of a raw scanner relationship graph.
+ *
+ * Reference-only discoveries (models, enums, interfaces, traits, facades, and
+ * model relationships) stay available in the Inspector/sidebar because the
+ * original graph is untouched, but they do not crowd the canvas. The canvas is
+ * intentionally reduced to files and callable methods so a developer can see:
+ * routes file -> route definition -> middleware file -> handle() -> controller
+ * file -> action() -> runtime call-outs.
+ */
+export function buildRouteDevelopmentSubgraph(
+  graph: Graph,
+  routeId: string,
+  withLifecycle: boolean
+): Graph {
+  const sourceGraph = normalizeRequestPipelineGraph(graph);
+  const raw = buildRouteFlowOnlySubgraph(sourceGraph, routeId, withLifecycle);
+  const sourceById = new Map(sourceGraph.nodes.map((node) => [node.id, node]));
+  const outputNodes = new Map<string, GraphNode>();
+  const outputEdges = new Map<string, GraphEdge>();
+  const nodeMap = new Map<string, { entryId: string; exitId: string }>();
+
+  const addNode = (node: GraphNode) => {
+    if (!outputNodes.has(node.id)) outputNodes.set(node.id, node);
+  };
+
+  const addEdge = (edge: GraphEdge) => {
+    if (edge.source === edge.target) return;
+    const key = `${edge.source}->${edge.target}:${edge.type}`;
+    if (!outputEdges.has(key)) outputEdges.set(key, edge);
+  };
+
+  for (const node of raw.nodes) {
+    if (REFERENCE_ONLY_NODE_TYPES.has(node.type)) continue;
+
+    if (node.type === "lifecycle") {
+      addNode(node);
+      nodeMap.set(node.id, { entryId: node.id, exitId: node.id });
+      continue;
+    }
+
+    const sourceNode = sourceById.get(String(node.data.originalNodeId ?? node.id)) ?? node;
+    const location = nodeLocation(sourceNode, sourceGraph) ?? nodeLocation(node, raw);
+    const hasMethod = shouldRenderAsMethod(sourceNode);
+
+    if (!location?.file && !hasMethod) continue;
+
+    let entryId: string;
+    let exitId: string;
+
+    if (location?.file) {
+      const fileNode = makeFileNode(location.file, sourceNode);
+      addNode(fileNode);
+      entryId = fileNode.id;
+      exitId = fileNode.id;
+
+      if (hasMethod) {
+        const methodNode = makeMethodNode(sourceNode, location.file, location.line);
+        addNode(methodNode);
+        addEdge({
+          id: `file-method::${fileNode.id}::${methodNode.id}`,
+          source: fileNode.id,
+          target: methodNode.id,
+          label: "contains",
+          type: "file-to-method",
+        });
+        exitId = methodNode.id;
+      }
+    } else {
+      const methodNode = makeMethodNode(sourceNode);
+      addNode(methodNode);
+      entryId = methodNode.id;
+      exitId = methodNode.id;
+    }
+
+    nodeMap.set(node.id, { entryId, exitId });
+  }
+
+  for (const edge of raw.edges) {
+    if (REFERENCE_ONLY_EDGE_TYPES.has(edge.type)) continue;
+    const source = nodeMap.get(edge.source);
+    const target = nodeMap.get(edge.target);
+    if (!source || !target) continue;
+
+    const targetId = flowTargetId(source, target);
+    if (!targetId) continue;
+
+    addEdge({
+      ...edge,
+      id: `development::${edge.id}`,
+      source: source.exitId,
+      target: targetId,
+    });
+  }
+
+  return {
+    meta: raw.meta,
+    nodes: [...outputNodes.values()],
+    edges: [...outputEdges.values()],
+  };
+}
+
+function buildRouteFlowOnlySubgraph(
+  graph: Graph,
+  routeId: string,
+  withLifecycle: boolean
+): Graph {
+  const routeNode = graph.nodes.find((node) => node.id === routeId);
+  if (!routeNode) return { meta: graph.meta, nodes: [], edges: [] };
+
+  const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  const outEdges = new Map<string, GraphEdge[]>();
+  for (const edge of graph.edges) {
+    if (!isRouteFlowEdge(edge, routeNode)) continue;
+    const arr = outEdges.get(edge.source) ?? [];
+    arr.push(edge);
+    outEdges.set(edge.source, arr);
+  }
+
+  const ids = new Set<string>();
+  const edgeIds = new Set<string>();
+  const queue = [routeId];
+
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (ids.has(id)) continue;
+    ids.add(id);
+
+    for (const edge of outEdges.get(id) ?? []) {
+      if (!byId.has(edge.target)) continue;
+      edgeIds.add(edge.id);
+      if (!ids.has(edge.target)) queue.push(edge.target);
+    }
+  }
+
+  const nodes = graph.nodes.filter((node) => ids.has(node.id));
+  const edges = graph.edges.filter(
+    (edge) => edgeIds.has(edge.id) && ids.has(edge.source) && ids.has(edge.target)
+  );
+
+  if (!withLifecycle) return { meta: graph.meta, nodes, edges };
+
+  const chain = buildLifecycleChain(routeId);
+  return {
+    meta: graph.meta,
+    nodes: [...chain.nodes, ...nodes],
+    edges: [...chain.edges, ...edges],
+  };
+}
+
+function isRouteFlowEdge(edge: GraphEdge, routeNode: GraphNode): boolean {
+  if (REFERENCE_ONLY_EDGE_TYPES.has(edge.type)) return false;
+  if (edge.type === "controller-to-action") {
+    const routeAction = typeof routeNode.data.action === "string" ? routeNode.data.action : "";
+    if (routeAction) return edge.target.endsWith(`::${routeAction}`);
+  }
+  return true;
+}
+
+function flowTargetId(
+  source: { entryId: string; exitId: string },
+  target: { entryId: string; exitId: string }
+): string | null {
+  // When a class-level node and its method live in the same file, routing the
+  // flow edge back into the file container creates loops or self-edges and makes
+  // the canvas look disconnected. In that case, continue straight to the method.
+  if (
+    (source.entryId === target.entryId || source.exitId === target.entryId) &&
+    target.exitId !== target.entryId
+  ) {
+    return target.exitId;
+  }
+  if (source.exitId === target.entryId) return null;
+  return target.entryId;
+}
+
+function shouldRenderAsMethod(node: GraphNode): boolean {
+  if ([
+    "route",
+    "middleware",
+    "controller",
+    "action",
+    "service",
+    "validation_request",
+    "filament_page_method",
+  ].includes(node.type)) {
+    return true;
+  }
+  return typeof node.data.method === "string" && node.data.method.length > 0;
+}
+
+function makeFileNode(file: string, sourceNode: GraphNode): GraphNode {
+  return {
+    id: `file::${file}`,
+    type: "file",
+    label: basename(file),
+    data: {
+      file,
+      path: file,
+      originalNodeId: sourceNode.id,
+      originalNodeType: sourceNode.type,
+    },
+  };
+}
+
+function makeMethodNode(sourceNode: GraphNode, file?: string, line?: number): GraphNode {
+  const label = methodLabel(sourceNode);
+  return {
+    id: `method::${sourceNode.id}`,
+    type: "method",
+    label,
+    data: {
+      ...sourceNode.data,
+      file: file ?? sourceNode.data.file,
+      line: line ?? sourceNode.data.line,
+      method: methodName(sourceNode),
+      signature: methodSignature(sourceNode),
+      originalNodeId: sourceNode.id,
+      originalNodeType: sourceNode.type,
+      originalLabel: sourceNode.label,
+    },
+  };
+}
+
+function methodName(node: GraphNode): string {
+  if (node.type === "route") return String(node.data.method ?? "Route").toUpperCase();
+  if (node.type === "middleware") return "handle";
+  if (node.type === "controller") return node.label;
+  if (node.type === "validation_request") return "rules";
+  return String(node.data.method ?? node.label ?? "method");
+}
+
+function methodLabel(node: GraphNode): string {
+  if (node.type === "route") {
+    return `${String(node.data.method ?? "").toUpperCase()} ${String(node.data.uri ?? node.label)}`.trim();
+  }
+  if (node.type === "middleware") return "handle()";
+  if (node.type === "controller") return node.label;
+  if (node.type === "validation_request") return "rules()";
+  const method = methodName(node);
+  return method.endsWith(")") ? method : `${method}()`;
+}
+
+function methodSignature(node: GraphNode): string {
+  const fqcn = String(node.data.fqcn ?? "");
+  const method = methodName(node);
+  if (node.type === "route") return `${node.data.method ?? ""} ${node.data.uri ?? ""}`.trim();
+  return fqcn ? `${fqcn}::${method}` : method;
+}
+
+function basename(file: string): string {
+  const normalized = file.replace(/\\/g, "/");
+  return normalized.split("/").filter(Boolean).pop() ?? file;
+}
+
+function normalizeRequestPipelineGraph(graph: Graph): Graph {
+  const legacyMiddlewareEdges = graph.edges.filter((edge) => edge.type === "route-to-middleware");
+  if (legacyMiddlewareEdges.length === 0) return graph;
+
+  const edgesByRoute = new Map<string, typeof legacyMiddlewareEdges>();
+  for (const edge of legacyMiddlewareEdges) {
+    const arr = edgesByRoute.get(edge.source) ?? [];
+    arr.push(edge);
+    edgesByRoute.set(edge.source, arr);
+  }
+
+  const normalizedEdges = graph.edges.filter(
+    (edge) => edge.type !== "route-to-middleware" && !(
+      edge.type === "route-to-controller" && edgesByRoute.has(edge.source)
+    )
+  );
+
+  for (const [routeId, middlewareEdges] of edgesByRoute) {
+    const controllerEdges = graph.edges.filter(
+      (edge) => edge.source === routeId && edge.type === "route-to-controller"
+    );
+    if (controllerEdges.length === 0) {
+      normalizedEdges.push(...middlewareEdges.map((edge, index) => ({
+        ...edge,
+        id: `normalized::${edge.id}`,
+        label: index === 0 ? "passes through" : "then",
+        type: "request-middleware",
+      })));
+      continue;
+    }
+
+    let previousId = routeId;
+    middlewareEdges.forEach((edge, index) => {
+      normalizedEdges.push({
+        ...edge,
+        id: `normalized::${edge.id}`,
+        source: previousId,
+        target: edge.target,
+        label: index === 0 ? "passes through" : "then",
+        type: "request-middleware",
+      });
+      previousId = edge.target;
+    });
+
+    controllerEdges.forEach((edge, index) => {
+      normalizedEdges.push({
+        ...edge,
+        id: `normalized::${edge.id}`,
+        source: index === 0 ? previousId : routeId,
+        label: index === 0 ? "continues to" : edge.label,
+      });
+    });
+  }
+
+  return { ...graph, edges: normalizedEdges };
 }
 
 /**
@@ -266,6 +599,7 @@ export function buildDisplayTree(
 
   // The route's incoming lifecycle edge (router -> route, "matches").
   real.edge = chain.edges.find((e) => e.target === routeId) ?? real.edge;
+  setDepths(real, chainNodes.length);
 
   let child: DescendantTreeNode = real;
   for (let i = chainNodes.length - 1; i >= 0; i--) {
@@ -274,4 +608,9 @@ export function buildDisplayTree(
     child = { node, edge, depth: i, children: [child] };
   }
   return child; // root = index
+}
+
+function setDepths(node: DescendantTreeNode, depth: number): void {
+  node.depth = depth;
+  for (const child of node.children) setDepths(child, depth + 1);
 }

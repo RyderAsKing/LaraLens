@@ -146,6 +146,17 @@
   }
 }
 
+@keyframes search-breathe {
+  0%, 100% {
+    opacity: 0.18;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 0.32;
+    transform: scale(1);
+  }
+}
+
 .lens-sweep {
   position: relative;
   border-radius: 9999px;
@@ -169,6 +180,20 @@
   z-index: 1;
   border-radius: 9999px;
   background: var(--optic);
+}
+
+.search-mark {
+  position: relative;
+  border-radius: 9999px;
+}
+.search-mark::before {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border-radius: 9999px;
+  background: var(--aperture);
+  filter: blur(16px);
+  animation: search-breathe 4s ease-in-out infinite;
 }
 
 /* --------------------------------------------------------------------------

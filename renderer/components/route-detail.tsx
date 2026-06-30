@@ -15,6 +15,7 @@ import { RouteSubgraphView } from "./route-subgraph-view";
 import { buildDisplayTree, routesAtUri } from "@/lib/route-tree";
 import type { DescendantTreeNode } from "@/lib/route-tree";
 import { ACCENT_COLORS, TYPE_LABELS, methodBadgeClass, nodeSubtitle } from "@/lib/graph";
+import { logMissingNodeLocation, nodeLocation } from "@/lib/node-location";
 import type { Graph } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -179,6 +180,7 @@ export function RouteDetail({
             lifecycle={lifecycle}
             selectedId={selectedId}
             onSelect={onSelect}
+            graph={graph}
           />
         ) : (
           <RouteSubgraphView
@@ -199,11 +201,13 @@ function TreeView({
   lifecycle,
   selectedId,
   onSelect,
+  graph,
 }: {
   displayTree: DescendantTreeNode;
   lifecycle: boolean;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  graph: Graph;
 }) {
   // Without lifecycle the root is the route itself (already shown in the
   // header), so render its children. With lifecycle the root is the entry
@@ -226,6 +230,7 @@ function TreeView({
           node={child}
           selectedId={selectedId}
           onSelect={onSelect}
+          graph={graph}
         />
       ))}
     </div>
@@ -236,10 +241,12 @@ function DescendantBranch({
   node,
   selectedId,
   onSelect,
+  graph,
 }: {
   node: DescendantTreeNode;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  graph: Graph;
 }) {
   const [open, setOpen] = useState(true);
   const hasChildren = node.children.length > 0;
@@ -247,6 +254,19 @@ function DescendantBranch({
   const subtitle = nodeSubtitle(node.node);
   const edgeLabel = node.edge?.label;
   const selected = selectedId === node.node.id;
+
+  const openCode = async () => {
+    const location = nodeLocation(node.node, graph);
+    if (!location) {
+      logMissingNodeLocation(node.node, graph, "tree node double-click");
+      return;
+    }
+    try {
+      await window.laralens.openCodeWindow(location.file, location.line);
+    } catch (error) {
+      console.error("Failed to open code window", error);
+    }
+  };
 
   return (
     <div>
@@ -277,7 +297,9 @@ function DescendantBranch({
         />
         <button
           onClick={() => onSelect(node.node.id)}
+          onDoubleClick={openCode}
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+          title="Double-click to open source"
         >
           <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-[var(--etch)]">
             {TYPE_LABELS[node.node.type]}
@@ -309,6 +331,7 @@ function DescendantBranch({
               node={child}
               selectedId={selectedId}
               onSelect={onSelect}
+              graph={graph}
             />
           ))}
         </div>

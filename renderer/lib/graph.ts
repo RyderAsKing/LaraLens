@@ -30,6 +30,8 @@ export const ACCENT_COLORS: Record<NodeType, string> = {
   filament_page_method: "#A88BC4",
   filament_widget: "#5EB8B8",
   filament_relation_manager: "#5EA8B8",
+  file: "#6F8798",
+  method: "#7AA8C4",
   lifecycle: "#7A7EB8",
 };
 
@@ -62,6 +64,8 @@ export const TYPE_LABELS: Record<NodeType, string> = {
   filament_page_method: "Filament Method",
   filament_widget: "Filament Widget",
   filament_relation_manager: "Relation Manager",
+  file: "File",
+  method: "Method",
   lifecycle: "Lifecycle",
 };
 
@@ -99,6 +103,10 @@ export function nodeSubtitle(node: GraphNodeLike): string {
       return (d.fqcn as string) ?? node.label;
     case "lifecycle":
       return (d.file as string) ?? (d.phase as string) ?? "";
+    case "file":
+      return (d.path as string) ?? (d.file as string) ?? "";
+    case "method":
+      return (d.signature as string) ?? (d.method as string) ?? (d.originalNodeType as string) ?? "";
     default:
       return "";
   }

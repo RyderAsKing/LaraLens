@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 
@@ -20,6 +20,7 @@ export default function CodeViewerPage() {
   const [file, setFile] = useState("");
   const [line, setLine] = useState(1);
   const [ready, setReady] = useState(false);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -46,6 +47,7 @@ export default function CodeViewerPage() {
           document
             .querySelector(`[data-line-number="${line}"]`)
             ?.scrollIntoView({ block: "center" });
+          if (scrollRef.current) scrollRef.current.scrollLeft = 0;
         });
       } else {
         setError(result.error ?? "Unable to read file.");
@@ -83,7 +85,7 @@ export default function CodeViewerPage() {
       {error ? (
         <div className="p-4 text-sm text-red-300">{error}</div>
       ) : (
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
           <SyntaxHighlighter
             language={language}
             style={vscDarkPlus}
@@ -115,6 +117,9 @@ export default function CodeViewerPage() {
               style: {
                 display: "block",
                 paddingRight: "16px",
+                paddingLeft: lineNumber === line ? "8px" : "0",
+                borderLeft:
+                  lineNumber === line ? "3px solid var(--aperture)" : "3px solid transparent",
                 background:
                   lineNumber === line ? "rgba(180, 128, 34, 0.32)" : "transparent",
               },
