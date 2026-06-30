@@ -76,6 +76,10 @@
   * {
     border-color: var(--border);
   }
+  html {
+    /* Bump the root font size so all rem-based UI scales up a step. */
+    font-size: 17px;
+  }
   body {
     background-color: var(--background);
     color: var(--foreground);
@@ -99,4 +103,33 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--muted-foreground);
+}
+
+/* React Flow controls + minimap — dark theme overrides
+   (the defaults ship a white background that clashes with the app). */
+.react-flow__controls {
+  border-radius: 0.375rem;
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+.react-flow__controls-button {
+  background: var(--card);
+  color: var(--foreground);
+  border-bottom: 1px solid var(--border);
+}
+.react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+.react-flow__controls-button:hover {
+  background: var(--accent);
+}
+.react-flow__controls-button:focus {
+  box-shadow: none;
+}
+.react-flow__controls-button svg {
+  fill: var(--foreground);
+}
+.react-flow__minimap {
+  border-radius: 0.375rem;
 }

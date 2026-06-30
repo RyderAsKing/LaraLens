@@ -20,40 +20,40 @@ function NodeCardComponent({ data, selected }: NodeProps) {
 
   return (
     <div
-      className="group relative rounded-md border bg-card px-3 py-2 shadow-sm transition-shadow"
+      className="group relative rounded-lg border bg-card px-4 py-3 shadow-md transition-shadow"
       style={{
         borderColor: selected ? accent : withAlpha(accent, 0.25),
         boxShadow: selected ? `0 0 0 1.5px ${accent}` : undefined,
-        width: 200,
+        width: 260,
       }}
     >
       <Handle
         type="target"
-        position={Position.Left}
-        className="!h-2 !w-2 !border-0"
+        position={Position.Top}
+        className="!h-2.5 !w-2.5 !border-0"
         style={{ background: accent }}
       />
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2.5">
         <span
-          className="inline-block h-2 w-2 shrink-0 rounded-full"
+          className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
           style={{ background: accent }}
         />
-        <span className="truncate text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+        <span className="truncate text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           {typeLabel}
         </span>
       </div>
-      <div className="mt-1 truncate text-sm font-medium text-foreground">
+      <div className="mt-2 truncate text-base font-semibold text-foreground">
         {d.label}
       </div>
       {d.subtitle ? (
-        <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+        <div className="mt-1 truncate font-mono text-xs text-muted-foreground">
           {d.subtitle}
         </div>
       ) : null}
       <Handle
         type="source"
-        position={Position.Right}
-        className="!h-2 !w-2 !border-0"
+        position={Position.Bottom}
+        className="!h-2.5 !w-2.5 !border-0"
         style={{ background: accent }}
       />
     </div>

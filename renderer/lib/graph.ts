@@ -30,6 +30,7 @@ export const ACCENT_COLORS: Record<NodeType, string> = {
   filament_page_method: "#E879F9",
   filament_widget: "#06B6D4",
   filament_relation_manager: "#0891B2",
+  lifecycle: "#6366f1",
 };
 
 export const TYPE_LABELS: Record<NodeType, string> = {
@@ -61,6 +62,7 @@ export const TYPE_LABELS: Record<NodeType, string> = {
   filament_page_method: "Filament Method",
   filament_widget: "Filament Widget",
   filament_relation_manager: "Relation Manager",
+  lifecycle: "Lifecycle",
 };
 
 /** Human-readable label for a node's primary data field, used in the inspector. */
@@ -95,6 +97,8 @@ export function nodeSubtitle(node: GraphNodeLike): string {
       return `${d.fqcn ?? ""}::${d.method ?? ""}`.replace(/^::$/, "");
     case "view":
       return (d.fqcn as string) ?? node.label;
+    case "lifecycle":
+      return (d.file as string) ?? (d.phase as string) ?? "";
     default:
       return "";
   }
@@ -104,6 +108,44 @@ interface GraphNodeLike {
   type: NodeType;
   label: string;
   data: Record<string, unknown>;
+}
+
+/** Tailwind text-color classes for HTTP method badges. */
+export const METHOD_COLORS: Record<string, string> = {
+  GET: "text-emerald-400",
+  POST: "text-sky-400",
+  PUT: "text-amber-400",
+  PATCH: "text-fuchsia-400",
+  DELETE: "text-red-400",
+  OPTIONS: "text-muted-foreground",
+  HEAD: "text-muted-foreground",
+  ANY: "text-muted-foreground",
+};
+
+/** Resolve a Tailwind text-color class for an HTTP method (case-insensitive). */
+export function methodColor(method: string): string {
+  return METHOD_COLORS[String(method).toUpperCase()] ?? "text-muted-foreground";
+}
+
+/**
+ * Calm, aligned badge classes for HTTP methods. Use with a fixed/min width so
+ * GET/PATCH/DELETE line up consistently in cards and tabs.
+ */
+export function methodBadgeClass(method: string): string {
+  switch (String(method).toUpperCase()) {
+    case "GET":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+    case "POST":
+      return "border-sky-500/30 bg-sky-500/10 text-sky-300";
+    case "PUT":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+    case "PATCH":
+      return "border-violet-500/30 bg-violet-500/10 text-violet-300";
+    case "DELETE":
+      return "border-rose-500/30 bg-rose-500/10 text-rose-300";
+    default:
+      return "border-border bg-muted/40 text-muted-foreground";
+  }
 }
 
 /** Convert a hex accent to an rgba with alpha. */

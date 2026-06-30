@@ -16,31 +16,43 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { NodeCard, type LaraLensNodeData } from "./node-card";
-import { layoutGraph } from "@/lib/layout";
+import { layoutHierarchyGraph } from "@/lib/layout";
 import { ACCENT_COLORS, nodeSubtitle } from "@/lib/graph";
-import type { Graph, GraphNode, NodeType } from "@/lib/types";
+import { buildRouteSubgraph, subgraphSeedIds } from "@/lib/route-tree";
+import type { Graph, GraphNode } from "@/lib/types";
 
 const nodeTypes: NodeTypes = { laraNode: NodeCard };
 
-interface GraphViewProps {
+interface RouteSubgraphViewProps {
   graph: Graph;
-  activeTypes: Set<NodeType>;
+  routeId: string;
+  withLifecycle: boolean;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
 }
 
-function GraphCanvas({ graph, activeTypes, selectedId, onSelect }: GraphViewProps) {
+function RouteSubgraphCanvas({
+  graph,
+  routeId,
+  withLifecycle,
+  selectedId,
+  onSelect,
+}: RouteSubgraphViewProps) {
+  const subgraph = useMemo(
+    () => buildRouteSubgraph(graph, routeId, withLifecycle),
+    [graph, routeId, withLifecycle]
+  );
+
+  const seedIds = useMemo(
+    () => subgraphSeedIds(withLifecycle),
+    [withLifecycle]
+  );
+
   const { nodes: laidOut, edges } = useMemo(() => {
-    const { nodes: positioned } = layoutGraph(graph);
+    const { nodes: positioned } = layoutHierarchyGraph(subgraph, seedIds);
 
-    // Filter by active types; keep edges whose both endpoints survive.
-    const visibleIds = new Set(
-      positioned.filter((n) => activeTypes.has(n.type)).map((n) => n.id)
-    );
-
-    const rfNodes: Node<LaraLensNodeData>[] = positioned
-      .filter((n) => visibleIds.has(n.id))
-      .map((n: GraphNode & { position: { x: number; y: number } }) => ({
+    const rfNodes: Node<LaraLensNodeData>[] = positioned.map(
+      (n: GraphNode & { position: { x: number; y: number } }) => ({
         id: n.id,
         type: "laraNode",
         position: n.position,
@@ -52,29 +64,27 @@ function GraphCanvas({ graph, activeTypes, selectedId, onSelect }: GraphViewProp
           ...n.data,
         },
         selected: n.id === selectedId,
-      }));
+      })
+    );
 
-    const rfEdges: Edge[] = graph.edges
-      .filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target))
-      .map((e) => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        label: e.label,
-        type: "smoothstep",
-        animated: false,
-        style: { stroke: "var(--border)", strokeWidth: 1.2 },
-        labelStyle: { fontSize: 10, fill: "var(--muted-foreground)" },
-        labelBgStyle: { fill: "var(--card)" },
-      }));
+    const rfEdges: Edge[] = subgraph.edges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      label: e.label,
+      type: "smoothstep",
+      animated: false,
+      style: { stroke: "var(--border)", strokeWidth: 1.4 },
+      labelStyle: { fontSize: 12, fill: "var(--muted-foreground)" },
+      labelBgStyle: { fill: "var(--card)" },
+    }));
 
     return { nodes: rfNodes, edges: rfEdges };
-  }, [graph, activeTypes, selectedId]);
+  }, [subgraph, seedIds, selectedId]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(laidOut);
   const [edgesState, setEdges, onEdgesChange] = useEdgesState(edges);
 
-  // Sync when the underlying graph/selection/filter changes.
   useEffect(() => {
     setNodes(laidOut);
     setEdges(edges);
@@ -88,10 +98,7 @@ function GraphCanvas({ graph, activeTypes, selectedId, onSelect }: GraphViewProp
   const handlePaneClick = useCallback(() => onSelect(null), [onSelect]);
 
   return (
-    <div
-      className="w-full min-w-0 bg-background"
-      style={{ height: "calc(100vh - 3.5rem)" }}
-    >
+    <div className="h-full w-full min-w-0 bg-background">
       <ReactFlow
         className="h-full w-full"
         style={{ width: "100%", height: "100%" }}
@@ -103,17 +110,19 @@ function GraphCanvas({ graph, activeTypes, selectedId, onSelect }: GraphViewProp
         onPaneClick={handlePaneClick}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.2, maxZoom: 1.2 }}
+        fitViewOptions={{ padding: 0.35, maxZoom: 1.1 }}
         proOptions={{ hideAttribution: true }}
         minZoom={0.2}
         maxZoom={2.5}
         defaultEdgeOptions={{ type: "smoothstep" }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--border)" />
-        <Controls
-          className="!rounded-md !border !border-border !bg-card !shadow-sm"
-          showInteractive={false}
+        <Background
+          variant={BackgroundVariant.Dots}
+          gap={20}
+          size={1}
+          color="var(--border)"
         />
+        <Controls showInteractive={false} />
         <MiniMap
           pannable
           zoomable
@@ -126,10 +135,10 @@ function GraphCanvas({ graph, activeTypes, selectedId, onSelect }: GraphViewProp
   );
 }
 
-export function GraphView(props: GraphViewProps) {
+export function RouteSubgraphView(props: RouteSubgraphViewProps) {
   return (
     <ReactFlowProvider>
-      <GraphCanvas {...props} />
+      <RouteSubgraphCanvas {...props} />
     </ReactFlowProvider>
   );
 }
