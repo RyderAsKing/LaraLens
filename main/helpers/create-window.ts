@@ -10,15 +10,17 @@ interface WindowState {
   isMaximized?: boolean;
 }
 
-const store = new Store<WindowState>({
-  name: "window-state",
-  defaults: { width: 1440, height: 900 },
-});
-
 export function createWindow(
   name: string,
   options: BrowserWindowConstructorOptions
 ): BrowserWindow {
+  const store = new Store<WindowState>({
+    name: `window-state-${name}`,
+    defaults: {
+      width: options.width ?? 1440,
+      height: options.height ?? 900,
+    },
+  });
   const state = store.store;
   const window = new BrowserWindow({
     ...options,

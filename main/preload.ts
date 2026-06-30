@@ -16,6 +16,12 @@ const laralens = {
   /** Open the OS directory picker and return the chosen absolute path, or null. */
   pickDirectory: () =>
     ipcRenderer.invoke("laralens:pick-directory") as Promise<string | null>,
+
+  openCodeWindow: (file: string, line?: number) =>
+    ipcRenderer.invoke("laralens:open-code-window", { file, line }) as Promise<void>,
+
+  readCodeFile: (file: string) =>
+    ipcRenderer.invoke("laralens:read-code-file", file) as Promise<{ ok: boolean; content?: string; error?: string }>,
 };
 
 export type LaraLensApi = typeof laralens;

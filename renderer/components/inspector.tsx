@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo } from "react";
+import { useId, useMemo, useState } from "react";
+import { ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ACCENT_COLORS, TYPE_LABELS } from "@/lib/graph";
-import type { Graph, GraphNode } from "@/lib/types";
+import type { Graph, GraphEdge, GraphNode } from "@/lib/types";
 
 interface InspectorProps {
   graph: Graph;
@@ -19,11 +20,17 @@ export function Inspector({ graph, selectedId }: InspectorProps) {
 
   const relatedEdges = useMemo(() => {
     if (!node) return { outgoing: [], incoming: [] };
+    const visibleEdges = graph.edges.filter((edge) => !isHiddenInspectorEdge(edge));
     return {
-      outgoing: graph.edges.filter((e) => e.source === node.id),
-      incoming: graph.edges.filter((e) => e.target === node.id),
+      outgoing: visibleEdges.filter((e) => e.source === node.id),
+      incoming: visibleEdges.filter((e) => e.target === node.id),
     };
   }, [graph, node]);
+
+  const nodesById = useMemo(
+    () => new Map(graph.nodes.map((graphNode) => [graphNode.id, graphNode])),
+    [graph.nodes]
+  );
 
   if (!node) {
     return (
@@ -39,6 +46,16 @@ export function Inspector({ graph, selectedId }: InspectorProps) {
   }
 
   const accent = ACCENT_COLORS[node.type] ?? "#7A7E85";
+  const ownLocation = nodeLocation(node);
+
+  const openOwnCode = async () => {
+    if (!ownLocation?.file) return;
+    try {
+      await window.laralens.openCodeWindow(ownLocation.file, ownLocation.line);
+    } catch (error) {
+      console.error("Failed to open code window", error);
+    }
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -51,6 +68,16 @@ export function Inspector({ graph, selectedId }: InspectorProps) {
           <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--etch)]">
             {TYPE_LABELS[node.type]}
           </span>
+          {ownLocation?.file && (
+            <button
+              type="button"
+              onClick={openOwnCode}
+              className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--etch)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--flare)]"
+              title={`Open ${ownLocation.file}${ownLocation.line ? `:${ownLocation.line}` : ""}`}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
         <h2 className="mt-2 font-[family-name:var(--font-display)] text-base font-medium tracking-[-0.01em] text-[var(--flare)]">
           {node.label}
@@ -71,27 +98,157 @@ export function Inspector({ graph, selectedId }: InspectorProps) {
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--etch)]">
               Relationships
             </p>
-            {relatedEdges.outgoing.map((e) => (
-              <EdgeRow
-                key={e.id}
+            <div className="space-y-2">
+              <RelationshipSection
+                key={`out-${node.id}`}
+                title="Outgoing"
                 kind="out"
-                label={e.label}
-                type={e.type}
-                other={e.target}
+                edges={relatedEdges.outgoing}
+                nodesById={nodesById}
               />
-            ))}
-            {relatedEdges.incoming.map((e) => (
-              <EdgeRow
-                key={e.id}
+              <RelationshipSection
+                key={`in-${node.id}`}
+                title="Incoming"
                 kind="in"
-                label={e.label}
-                type={e.type}
-                other={e.source}
+                edges={relatedEdges.incoming}
+                nodesById={nodesById}
               />
-            ))}
+            </div>
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function RelationshipSection({
+  title,
+  kind,
+  edges,
+  nodesById,
+}: {
+  title: string;
+  kind: "in" | "out";
+  edges: GraphEdge[];
+  nodesById: Map<string, GraphNode>;
+}) {
+  const [open, setOpen] = useState(edges.length > 0);
+  const contentId = useId();
+
+  if (edges.length === 0) return null;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-2 py-1.5 text-left"
+        aria-expanded={open}
+        aria-controls={contentId}
+      >
+        <span className="text-xs font-semibold text-[var(--flare)]">{title}</span>
+        <span className="h-px flex-1 bg-[var(--chassis)]" />
+        <span className="rounded-full border border-[var(--chassis)] px-1.5 py-0.5 text-[10px] text-[var(--etch)]">
+          {edges.length}
+        </span>
+        {open ? (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[var(--etch)]" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--etch)]" />
+        )}
+      </button>
+
+      {open && (
+        <div id={contentId} className="space-y-1.5 pb-2">
+          {edges.map((edge) => (
+            <RelationshipItem
+              key={edge.id}
+              kind={kind}
+              edge={edge}
+              otherNode={nodesById.get(kind === "out" ? edge.target : edge.source)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RelationshipItem({
+  kind,
+  edge,
+  otherNode,
+}: {
+  kind: "in" | "out";
+  edge: GraphEdge;
+  otherNode?: GraphNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const contentId = useId();
+  const other = otherNode?.label ?? (kind === "out" ? edge.target : edge.source);
+  const location = nodeLocation(otherNode);
+
+  const openCode = async () => {
+    if (!location?.file) return;
+    try {
+      await window.laralens.openCodeWindow(location.file, location.line);
+    } catch (error) {
+      console.error("Failed to open code window", error);
+    }
+  };
+
+  return (
+    <div className="border-b border-[var(--chassis)]/70 pb-1.5 last:border-b-0">
+      <div className="flex items-center gap-2 py-1">
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          aria-expanded={open}
+          aria-controls={contentId}
+        >
+          {open ? (
+            <ChevronDown className="h-3 w-3 shrink-0 text-[var(--etch)]" />
+          ) : (
+            <ChevronRight className="h-3 w-3 shrink-0 text-[var(--etch)]" />
+          )}
+          <Badge variant={kind === "out" ? "default" : "secondary"} className="shrink-0">
+            {relationshipLabel(edge, kind)}
+          </Badge>
+          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--flare)]">
+            {other}
+          </span>
+        </button>
+        {location?.file && (
+          <button
+            type="button"
+            onClick={openCode}
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--etch)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--flare)]"
+            title={`Open ${location.file}${location.line ? `:${location.line}` : ""}`}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div id={contentId} className="ml-5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 pb-1 text-[10px]">
+          <span className="font-semibold uppercase tracking-wider text-[var(--etch)]">Direction</span>
+          <span className="truncate text-[var(--etch)]">{kind === "out" ? "Outgoing" : "Incoming"}</span>
+          <span className="font-semibold uppercase tracking-wider text-[var(--etch)]">Type</span>
+          <span className="truncate text-[var(--etch)]">{edge.type}</span>
+          <span className="font-semibold uppercase tracking-wider text-[var(--etch)]">ID</span>
+          <span className="truncate font-mono text-[var(--etch)]" title={edge.id}>{edge.id}</span>
+          {location?.file && (
+            <>
+              <span className="font-semibold uppercase tracking-wider text-[var(--etch)]">File</span>
+              <span className="truncate font-mono text-[var(--etch)]" title={location.file}>
+                {location.file}{location.line ? `:${location.line}` : ""}
+              </span>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -112,34 +269,27 @@ function DataRow({ label, value, mono }: { label: string; value: string; mono?: 
   );
 }
 
-function EdgeRow({
-  kind,
-  label,
-  type,
-  other,
-}: {
-  kind: "in" | "out";
-  label: string;
-  type: string;
-  other: string;
-}) {
-  return (
-    <div className="mb-2 flex items-center gap-2 text-xs">
-      <Badge
-        variant={kind === "out" ? "default" : "secondary"}
-        className="shrink-0"
-      >
-        {label}
-      </Badge>
-      <span className="truncate font-mono text-[11px] text-[var(--etch)]">
-        {other}
-      </span>
-      <span className="ml-auto shrink-0 text-[10px] text-[var(--etch)]">
-        {type}
-      </span>
-    </div>
-  );
+function nodeLocation(node?: GraphNode): { file: string; line?: number } | null {
+  const file = node?.data.file;
+  if (typeof file !== "string" || file.length === 0) return null;
+
+  const line = node?.data.line;
+  return { file, line: typeof line === "number" ? line : undefined };
 }
+
+function isHiddenInspectorEdge(edge: GraphEdge): boolean {
+  return edge.type === "action-to-validation_request";
+}
+
+function relationshipLabel(edge: GraphEdge, kind: "in" | "out"): string {
+  if (kind === "out") return edge.label;
+
+  return INCOMING_RELATIONSHIP_LABELS[edge.type] ?? edge.label;
+}
+
+const INCOMING_RELATIONSHIP_LABELS: Record<string, string> = {
+  "route-to-middleware": "guards",
+};
 
 function formatValue(value: unknown): string {
   if (value === null || value === undefined) return "";

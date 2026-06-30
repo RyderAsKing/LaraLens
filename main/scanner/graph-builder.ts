@@ -210,6 +210,7 @@ export class GraphBuilder {
           declaringFqcn: m.declaringFqcn,
           method: m.name,
           file: c.file,
+          line: m.loc?.start.line,
           visibility: m.visibility,
           flowSteps: [],
           metrics: {
@@ -282,11 +283,20 @@ export class GraphBuilder {
           targetId = `notification::${edge.calleeFqcn}`;
           label = "sends";
           break;
-        case "validation_request":
-          targetType = "validation_request";
-          targetId = `validation_request::${edge.calleeFqcn}`;
-          label = "validates with";
-          break;
+        case "validation_request": {
+          // Validation requests are a property of the action, not a shared
+          // graph entity. Recording them on the caller node avoids creating a
+          // class-level node that would aggregate every action using the same
+          // Request class (e.g. 27 unrelated "validates with" incoming edges).
+          const callerNode = this.nodes.get(callerId);
+          if (callerNode) {
+            const existing = (callerNode.data.validates as string[] | undefined) ?? [];
+            if (!existing.includes(edge.calleeFqcn)) {
+              callerNode.data.validates = [...existing, edge.calleeFqcn];
+            }
+          }
+          continue;
+        }
         case "enum":
           targetType = "enum";
           targetId = `enum::${edge.calleeFqcn}`;

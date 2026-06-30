@@ -35,6 +35,8 @@ declare global {
     laralens: {
       scan: (projectPath: string) => Promise<ScanResult>;
       pickDirectory: () => Promise<string | null>;
+      openCodeWindow: (file: string, line?: number) => Promise<void>;
+      readCodeFile: (file: string) => Promise<{ ok: boolean; content?: string; error?: string }>;
     };
   }
 }
