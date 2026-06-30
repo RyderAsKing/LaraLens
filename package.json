@@ -1,0 +1,45 @@
+{
+  "name": "laralens",
+  "version": "0.1.0",
+  "description": "High-performance Electron desktop app that scans Laravel projects and visualizes their architecture as an interactive graph.",
+  "author": "LaraLens",
+  "type": "module",
+  "main": "app/main.js",
+  "private": true,
+  "scripts": {
+    "dev": "nextron",
+    "build": "nextron build",
+    "build:win32": "nextron build --win32",
+    "build:win64": "nextron build --win64",
+    "build:mac": "nextron build --mac",
+    "build:linux": "nextron build --linux",
+    "postinstall": "electron-builder install-app-deps",
+    "typecheck:main": "tsc --noEmit -p tsconfig.main.json",
+    "typecheck:renderer": "tsc --noEmit -p renderer/tsconfig.json"
+  },
+  "dependencies": {
+    "electron-serve": "^2.1.1",
+    "electron-store": "^10.0.1",
+    "fast-glob": "^3.3.3",
+    "php-parser": "^3.7.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.2",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@xyflow/react": "^12.11.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "electron": "^42.5.1",
+    "electron-builder": "^26.15.3",
+    "lucide-react": "^0.469.0",
+    "next": "^16.2.9",
+    "nextron": "^10.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^2.6.0",
+    "tailwindcss": "^4.3.2",
+    "typescript": "^5.7.0"
+  }
+}
