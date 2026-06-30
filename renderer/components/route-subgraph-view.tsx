@@ -5,7 +5,6 @@ import {
   ReactFlow,
   ReactFlowProvider,
   Background,
-  Controls,
   MiniMap,
   useNodesState,
   useEdgesState,
@@ -122,7 +121,6 @@ function RouteSubgraphCanvas({
           size={1}
           color="var(--border)"
         />
-        <Controls showInteractive={false} />
         <MiniMap
           pannable
           zoomable

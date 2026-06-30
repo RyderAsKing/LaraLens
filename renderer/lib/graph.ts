@@ -1,36 +1,36 @@
 import type { NodeType } from "./types";
 
-/** Exact accent color mapping from the reference laravel-brain graphConstants. */
+/** Optical-accent color mapping — warm, muted, harmonious. */
 export const ACCENT_COLORS: Record<NodeType, string> = {
-  route: "#4CAF50",
-  middleware: "#FF9800",
-  controller: "#2196F3",
-  livewire_component: "#FB7185",
-  action: "#03A9F4",
-  service: "#9C27B0",
-  validation_request: "#0d9488",
-  model: "#F44336",
-  event: "#FFD600",
-  job: "#607D8B",
-  command: "#14b8a6",
-  channel: "#8b5cf6",
-  schedule: "#f97316",
-  view: "#ec4899",
-  mail: "#f472b6",
-  notification: "#db2777",
-  enum: "#0ea5e9",
-  interface: "#38bdf8",
-  trait: "#a78bfa",
-  abstract_class: "#94a3b8",
-  service_provider: "#ca8a04",
-  facade: "#00BCD4",
-  filament_panel: "#7C3AED",
-  filament_resource: "#A855F7",
-  filament_page: "#C084FC",
-  filament_page_method: "#E879F9",
-  filament_widget: "#06B6D4",
-  filament_relation_manager: "#0891B2",
-  lifecycle: "#6366f1",
+  route: "#5A9B8E",
+  middleware: "#C49A5E",
+  controller: "#5B8DB8",
+  livewire_component: "#B88B9A",
+  action: "#6B9FB8",
+  service: "#9B8BB8",
+  validation_request: "#5E9B8A",
+  model: "#B85C5C",
+  event: "#C4A85E",
+  job: "#7A8B9B",
+  command: "#5E9B8E",
+  channel: "#8B7CB3",
+  schedule: "#C4945E",
+  view: "#B87A9B",
+  mail: "#B88B9B",
+  notification: "#B85C7A",
+  enum: "#5EA8C4",
+  interface: "#6B9FC4",
+  trait: "#8B8BB8",
+  abstract_class: "#7A7E85",
+  service_provider: "#C4A25E",
+  facade: "#5EB8C4",
+  filament_panel: "#7A6BB8",
+  filament_resource: "#8B7CB8",
+  filament_page: "#9B8BC4",
+  filament_page_method: "#A88BC4",
+  filament_widget: "#5EB8B8",
+  filament_relation_manager: "#5EA8B8",
+  lifecycle: "#7A7EB8",
 };
 
 export const TYPE_LABELS: Record<NodeType, string> = {
@@ -110,41 +110,41 @@ interface GraphNodeLike {
   data: Record<string, unknown>;
 }
 
-/** Tailwind text-color classes for HTTP method badges. */
+/** Tailwind text-color classes for HTTP method badges — optical palette. */
 export const METHOD_COLORS: Record<string, string> = {
-  GET: "text-emerald-400",
-  POST: "text-sky-400",
-  PUT: "text-amber-400",
-  PATCH: "text-fuchsia-400",
-  DELETE: "text-red-400",
-  OPTIONS: "text-muted-foreground",
-  HEAD: "text-muted-foreground",
-  ANY: "text-muted-foreground",
+  GET: "text-[#7AB8AA]",
+  POST: "text-[#7AA8C4]",
+  PUT: "text-[#C4A97A]",
+  PATCH: "text-[#9B8BB8]",
+  DELETE: "text-[#C47A7A]",
+  OPTIONS: "text-[var(--etch)]",
+  HEAD: "text-[var(--etch)]",
+  ANY: "text-[var(--etch)]",
 };
 
 /** Resolve a Tailwind text-color class for an HTTP method (case-insensitive). */
 export function methodColor(method: string): string {
-  return METHOD_COLORS[String(method).toUpperCase()] ?? "text-muted-foreground";
+  return METHOD_COLORS[String(method).toUpperCase()] ?? "text-[var(--etch)]";
 }
 
 /**
- * Calm, aligned badge classes for HTTP methods. Use with a fixed/min width so
- * GET/PATCH/DELETE line up consistently in cards and tabs.
+ * Calm, aligned badge classes for HTTP methods. Harmonized with the
+ * optical dark theme — muted, warm, coating-like.
  */
 export function methodBadgeClass(method: string): string {
   switch (String(method).toUpperCase()) {
     case "GET":
-      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+      return "border-[#5A9B8E]/25 bg-[#5A9B8E]/10 text-[#7AB8AA]";
     case "POST":
-      return "border-sky-500/30 bg-sky-500/10 text-sky-300";
+      return "border-[#5B8DB8]/25 bg-[#5B8DB8]/10 text-[#7AA8C4]";
     case "PUT":
-      return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+      return "border-[#C49A5E]/25 bg-[#C49A5E]/10 text-[#C4A97A]";
     case "PATCH":
-      return "border-violet-500/30 bg-violet-500/10 text-violet-300";
+      return "border-[#8B7CB3]/25 bg-[#8B7CB3]/10 text-[#9B8BB8]";
     case "DELETE":
-      return "border-rose-500/30 bg-rose-500/10 text-rose-300";
+      return "border-[#B85C5C]/25 bg-[#B85C5C]/10 text-[#C47A7A]";
     default:
-      return "border-border bg-muted/40 text-muted-foreground";
+      return "border-[var(--chassis)] bg-[var(--void)] text-[var(--etch)]";
   }
 }
 

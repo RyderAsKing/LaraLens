@@ -2,7 +2,6 @@
 
 import { FolderOpen, Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import type { ScanSummary } from "@/lib/types";
 
 interface ToolbarProps {
@@ -10,6 +9,7 @@ interface ToolbarProps {
   projectName: string;
   summary: ScanSummary | null;
   status: "idle" | "scanning" | "success" | "error";
+  onHome: () => void;
   onPickAndScan: () => void;
   onRescan: () => void;
 }
@@ -19,43 +19,59 @@ export function Toolbar({
   projectName,
   summary,
   status,
+  onHome,
   onPickAndScan,
   onRescan,
 }: ToolbarProps) {
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
-      <span className="text-sm font-semibold tracking-tight">LaraLens</span>
+    <header className="flex h-14 shrink-0 items-center gap-4 border-b border-[var(--chassis)] bg-[var(--void)] px-5">
+      {/* Brand */}
+      <button
+        type="button"
+        onClick={onHome}
+        className="rounded px-1.5 py-1 font-[family-name:var(--font-display)] text-sm font-semibold tracking-[-0.03em] text-[var(--flare)] transition-colors hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--aperture)]"
+        aria-label="Go to home"
+      >
+        <span>
+          LaraLens
+        </span>
+      </button>
 
-      <div className="mx-1 h-5 w-px bg-border" />
+      <div className="h-5 w-px bg-[var(--chassis)]" />
 
-      <div className="flex min-w-0 flex-1 items-center gap-2">
+      {/* Project */}
+      <div className="flex min-w-0 flex-1 items-center gap-3">
         {projectPath ? (
           <>
-            <span className="truncate text-sm text-foreground">{projectName}</span>
-            <span className="hidden truncate text-xs text-muted-foreground md:inline">
+            <span className="truncate text-sm font-medium text-[var(--flare)]">
+              {projectName}
+            </span>
+            <span className="hidden truncate font-mono text-xs text-[var(--etch)] md:inline">
               {projectPath}
             </span>
           </>
         ) : (
-          <span className="text-sm text-muted-foreground">
+          <span className="text-sm text-[var(--etch)]">
             No project loaded
           </span>
         )}
       </div>
 
+      {/* Stats — instrument readout style */}
       {summary && (
-        <div className="hidden items-center gap-1.5 lg:flex">
-          <StatBadge label="Routes" value={summary.totalRoutes} />
-          <StatBadge label="Controllers" value={summary.totalControllers} />
-          <StatBadge label="Models" value={summary.totalModels} />
-          <StatBadge label="Commands" value={summary.totalCommands} />
-          <StatBadge label="Middleware" value={summary.totalMiddleware} />
-          <span className="text-[10px] text-muted-foreground">
+        <div className="hidden items-center gap-5 lg:flex">
+          <StatReadout label="Routes" value={summary.totalRoutes} />
+          <StatReadout label="Controllers" value={summary.totalControllers} />
+          <StatReadout label="Models" value={summary.totalModels} />
+          <StatReadout label="Commands" value={summary.totalCommands} />
+          <StatReadout label="Middleware" value={summary.totalMiddleware} />
+          <span className="font-mono text-[10px] text-[var(--etch)]">
             {Math.round(summary.durationMs)}ms
           </span>
         </div>
       )}
 
+      {/* Actions */}
       <div className="flex items-center gap-2">
         {projectPath && (
           <Button
@@ -68,7 +84,11 @@ export function Toolbar({
             Rescan
           </Button>
         )}
-        <Button size="sm" onClick={onPickAndScan} disabled={status === "scanning"}>
+        <Button
+          size="sm"
+          onClick={onPickAndScan}
+          disabled={status === "scanning"}
+        >
           {status === "scanning" ? (
             <Loader2 className="animate-spin" />
           ) : (
@@ -81,11 +101,15 @@ export function Toolbar({
   );
 }
 
-function StatBadge({ label, value }: { label: string; value: number }) {
+function StatReadout({ label, value }: { label: string; value: number }) {
   return (
-    <Badge variant="muted" className="gap-1.5">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="tabular-nums text-foreground">{value}</span>
-    </Badge>
+    <div className="flex flex-col items-center leading-none">
+      <span className="font-[family-name:var(--font-display)] text-sm font-semibold tabular-nums text-[var(--flare)]">
+        {value}
+      </span>
+      <span className="mt-0.5 text-[9px] font-medium uppercase tracking-wider text-[var(--etch)]">
+        {label}
+      </span>
+    </div>
   );
 }

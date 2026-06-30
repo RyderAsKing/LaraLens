@@ -28,28 +28,31 @@ export function Inspector({ graph, selectedId }: InspectorProps) {
   if (!node) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-6 text-center">
-        <p className="text-sm text-muted-foreground">
+        <div className="lens-sweep h-10 w-10 opacity-40">
+          <div className="lens-sweep-inner h-full w-full" />
+        </div>
+        <p className="mt-3 text-sm text-[var(--etch)]">
           Select a node to inspect its details.
         </p>
       </div>
     );
   }
 
-  const accent = ACCENT_COLORS[node.type] ?? "#94a3b8";
+  const accent = ACCENT_COLORS[node.type] ?? "#7A7E85";
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b p-4">
+      <div className="border-b border-[var(--chassis)] p-4">
         <div className="flex items-center gap-2">
           <span
             className="h-2.5 w-2.5 rounded-full"
-            style={{ background: accent }}
+            style={{ background: accent, boxShadow: `0 0 6px ${accent}60` }}
           />
-          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--etch)]">
             {TYPE_LABELS[node.type]}
           </span>
         </div>
-        <h2 className="mt-2 text-base font-semibold text-foreground">
+        <h2 className="mt-2 font-[family-name:var(--font-display)] text-base font-medium tracking-[-0.01em] text-[var(--flare)]">
           {node.label}
         </h2>
       </div>
@@ -64,8 +67,8 @@ export function Inspector({ graph, selectedId }: InspectorProps) {
 
         {(relatedEdges.outgoing.length > 0 || relatedEdges.incoming.length > 0) && (
           <>
-            <Separator className="my-4" />
-            <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            <Separator className="my-4 bg-[var(--chassis)]" />
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--etch)]">
               Relationships
             </p>
             {relatedEdges.outgoing.map((e) => (
@@ -96,12 +99,12 @@ export function Inspector({ graph, selectedId }: InspectorProps) {
 function DataRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   if (!value || value === "[]" || value === "{}") return null;
   return (
-    <div className="mb-3">
-      <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+    <div className="mb-3.5">
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--etch)]">
         {label}
       </div>
       <div
-        className={`mt-0.5 break-words text-sm text-foreground ${mono ? "font-mono text-xs" : ""}`}
+        className={`mt-1 break-words text-sm text-[var(--flare)] ${mono ? "font-mono text-[11px]" : ""}`}
       >
         {value}
       </div>
@@ -122,9 +125,18 @@ function EdgeRow({
 }) {
   return (
     <div className="mb-2 flex items-center gap-2 text-xs">
-      <Badge variant={kind === "out" ? "default" : "secondary"}>{label}</Badge>
-      <span className="truncate font-mono text-muted-foreground">{other}</span>
-      <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{type}</span>
+      <Badge
+        variant={kind === "out" ? "default" : "secondary"}
+        className="shrink-0"
+      >
+        {label}
+      </Badge>
+      <span className="truncate font-mono text-[11px] text-[var(--etch)]">
+        {other}
+      </span>
+      <span className="ml-auto shrink-0 text-[10px] text-[var(--etch)]">
+        {type}
+      </span>
     </div>
   );
 }

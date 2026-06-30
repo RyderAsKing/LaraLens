@@ -58,8 +58,8 @@ export function RouteDetail({
   if (!route || !displayTree) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-8 text-center">
-        <MousePointerClick className="mb-3 h-8 w-8 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">
+        <MousePointerClick className="mb-3 h-8 w-8 text-[var(--etch)]" />
+        <p className="text-sm text-[var(--etch)]">
           Select a route to explore everything reachable from it.
         </p>
       </div>
@@ -73,11 +73,11 @@ export function RouteDetail({
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="shrink-0 border-b px-4 py-3">
-        <div className="flex items-center gap-2">
+      <div className="shrink-0 border-b border-[var(--chassis)] px-5 py-3">
+        <div className="flex items-center gap-3">
           <button
             onClick={onBack}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="inline-flex items-center gap-1 rounded-md border border-[var(--chassis)] bg-[var(--optic)] px-2.5 py-1 text-xs text-[var(--etch)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--flare)]"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
             Routes
@@ -86,17 +86,17 @@ export function RouteDetail({
           <div className="flex flex-wrap items-center gap-2">
             <span
               className={cn(
-                "inline-flex min-w-16 justify-center rounded-md border px-2 py-0.5 font-mono text-xs font-bold",
+                "inline-flex min-w-14 justify-center rounded-md border px-2 py-0.5 font-mono text-[11px] font-bold",
                 methodBadgeClass(method)
               )}
             >
               {method}
             </span>
-            <span className="font-mono text-sm font-semibold text-foreground">
+            <span className="font-mono text-sm font-semibold text-[var(--flare)]">
               {uri}
             </span>
             {name && (
-              <span className="text-xs text-muted-foreground">named {name}</span>
+              <span className="text-xs text-[var(--etch)]">named {name}</span>
             )}
           </div>
 
@@ -107,8 +107,8 @@ export function RouteDetail({
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
                 lifecycle
-                  ? "border-primary bg-primary/10 text-foreground"
-                  : "border-border text-muted-foreground hover:text-foreground"
+                  ? "border-[var(--aperture)]/30 bg-[var(--aperture)]/10 text-[var(--flare)]"
+                  : "border-[var(--chassis)] text-[var(--etch)] hover:text-[var(--flare)] hover:bg-[var(--accent)]"
               )}
               title="Toggle Laravel request lifecycle (entry → bootstrap → kernel → router → route)"
             >
@@ -117,14 +117,14 @@ export function RouteDetail({
             </button>
 
             {/* Tree / Graph segmented toggle */}
-            <div className="flex rounded-md border border-border p-0.5">
+            <div className="flex rounded-md border border-[var(--chassis)] p-0.5">
               <button
                 onClick={() => setViewMode("tree")}
                 className={cn(
                   "inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium transition-colors",
                   viewMode === "tree"
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "bg-[var(--chassis)] text-[var(--flare)]"
+                    : "text-[var(--etch)] hover:text-[var(--flare)]"
                 )}
               >
                 <ListTree className="h-3.5 w-3.5" />
@@ -135,8 +135,8 @@ export function RouteDetail({
                 className={cn(
                   "inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium transition-colors",
                   viewMode === "graph"
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "bg-[var(--chassis)] text-[var(--flare)]"
+                    : "text-[var(--etch)] hover:text-[var(--flare)]"
                 )}
               >
                 <Network className="h-3.5 w-3.5" />
@@ -148,7 +148,7 @@ export function RouteDetail({
 
         {/* Method tabs when multiple methods share this URI */}
         {siblings.length > 1 && (
-          <div className="mt-2 flex flex-wrap items-center gap-1">
+          <div className="mt-2.5 flex flex-wrap items-center gap-1">
             {siblings.map((s) => {
               const m = String(s.data.method ?? "").toUpperCase();
               const active = s.id === routeId;
@@ -160,7 +160,7 @@ export function RouteDetail({
                     "rounded-md border px-2 py-0.5 font-mono text-[11px] font-bold transition-colors",
                     active
                       ? methodBadgeClass(m)
-                      : "border-border text-muted-foreground hover:bg-accent hover:text-foreground"
+                      : "border-[var(--chassis)] text-[var(--etch)] hover:bg-[var(--accent)] hover:text-[var(--flare)]"
                   )}
                 >
                   {m}
@@ -212,14 +212,14 @@ function TreeView({
 
   if (roots.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
+      <div className="flex h-full items-center justify-center p-6 text-sm text-[var(--etch)]">
         No outgoing relationships from this route.
       </div>
     );
   }
 
   return (
-    <div className="h-full overflow-y-auto p-2">
+    <div className="h-full overflow-y-auto p-3">
       {roots.map((child) => (
         <DescendantBranch
           key={child.node.id}
@@ -243,7 +243,7 @@ function DescendantBranch({
 }) {
   const [open, setOpen] = useState(true);
   const hasChildren = node.children.length > 0;
-  const accent = ACCENT_COLORS[node.node.type] ?? "#94a3b8";
+  const accent = ACCENT_COLORS[node.node.type] ?? "#7A7E85";
   const subtitle = nodeSubtitle(node.node);
   const edgeLabel = node.edge?.label;
   const selected = selectedId === node.node.id;
@@ -252,14 +252,14 @@ function DescendantBranch({
     <div>
       <div
         className={cn(
-          "group flex items-center gap-1.5 rounded-md py-1 pr-2 transition-colors hover:bg-accent",
-          selected && "bg-accent"
+          "group flex items-center gap-1.5 rounded-md py-1 pr-2 transition-colors hover:bg-[var(--accent)]",
+          selected && "bg-[var(--accent)]"
         )}
       >
         {hasChildren ? (
           <button
             onClick={() => setOpen((o) => !o)}
-            className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
+            className="flex h-4 w-4 shrink-0 items-center justify-center text-[var(--etch)] hover:text-[var(--flare)]"
             aria-label={open ? "Collapse" : "Expand"}
           >
             {open ? (
@@ -279,14 +279,14 @@ function DescendantBranch({
           onClick={() => onSelect(node.node.id)}
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
         >
-          <span className="shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-[var(--etch)]">
             {TYPE_LABELS[node.node.type]}
           </span>
-          <span className="truncate text-sm text-foreground">
+          <span className="truncate text-sm text-[var(--flare)]">
             {node.node.label}
           </span>
           {subtitle && subtitle !== node.node.label && (
-            <span className="truncate font-mono text-xs text-muted-foreground">
+            <span className="truncate font-mono text-[11px] text-[var(--etch)]">
               {subtitle}
             </span>
           )}
@@ -294,7 +294,7 @@ function DescendantBranch({
         {edgeLabel && (
           <Badge
             variant="outline"
-            className="shrink-0 text-[10px] font-normal text-muted-foreground"
+            className="shrink-0 text-[10px] font-normal text-[var(--etch)]"
           >
             {edgeLabel}
           </Badge>
@@ -302,7 +302,7 @@ function DescendantBranch({
       </div>
 
       {hasChildren && open && (
-        <div className="ml-3 border-l border-border pl-2">
+        <div className="ml-3 border-l border-[var(--chassis)] pl-2">
           {node.children.map((child) => (
             <DescendantBranch
               key={child.node.id}
