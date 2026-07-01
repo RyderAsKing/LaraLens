@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Toolbar } from "@/components/toolbar";
 import { Inspector } from "@/components/inspector";
-import { RouteBrowser } from "@/components/route-browser";
+import { RouteBrowser, type RouteViewMode } from "@/components/route-browser";
 import { RouteDetail } from "@/components/route-detail";
 import { EmptyState, type RecentProject } from "@/components/empty-state";
 import { useScan } from "@/hooks/use-scan";
@@ -23,6 +23,7 @@ export default function Page() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [browsePath, setBrowsePath] = useState<string>("/");
+  const [routeViewMode, setRouteViewMode] = useState<RouteViewMode>("cards");
   const [showHome, setShowHome] = useState(false);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
 
@@ -148,6 +149,8 @@ export default function Page() {
                 browsePath={browsePath}
                 onBrowse={handleBrowse}
                 onOpenRoute={handleOpenRoute}
+                viewMode={routeViewMode}
+                onViewModeChange={setRouteViewMode}
               />
             )}
           </main>

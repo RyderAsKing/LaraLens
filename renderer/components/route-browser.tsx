@@ -1,18 +1,23 @@
 "use client";
 
 import { useMemo } from "react";
-import { Folder, FileCode, ChevronRight, Home } from "lucide-react";
+import { Folder, FileCode, ChevronRight, Home, LayoutGrid, ListTree } from "lucide-react";
 import { buildRouteUriTree } from "@/lib/route-tree";
 import type { UriTreeNode } from "@/lib/route-tree";
 import { displayHttpMethod, methodBadgeClass } from "@/lib/graph";
 import type { Graph, GraphNode } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { RouteTreeView } from "./route-tree-view";
+
+export type RouteViewMode = "cards" | "tree";
 
 interface RouteBrowserProps {
   graph: Graph;
   browsePath: string;
   onBrowse: (path: string) => void;
   onOpenRoute: (routeId: string) => void;
+  viewMode: RouteViewMode;
+  onViewModeChange: (mode: RouteViewMode) => void;
 }
 
 /** Find the URI tree node at `path` (`/` for root). */
@@ -39,6 +44,8 @@ export function RouteBrowser({
   browsePath,
   onBrowse,
   onOpenRoute,
+  viewMode,
+  onViewModeChange,
 }: RouteBrowserProps) {
   const tree = useMemo(() => buildRouteUriTree(graph), [graph]);
   const node = useMemo(() => findUriNode(tree, browsePath), [tree, browsePath]);
@@ -54,7 +61,7 @@ export function RouteBrowser({
     return items;
   }, [browsePath]);
 
-  if (!node) {
+  if (!node && viewMode === "cards") {
     return (
       <div className="flex h-full items-center justify-center p-8 text-sm text-[var(--etch)]">
         No routes here.
@@ -63,27 +70,30 @@ export function RouteBrowser({
   }
 
   // Folders = child segments that themselves have sub-segments.
-  const folders = node.children.filter((c) => c.children.length > 0);
+  const folders = node ? node.children.filter((c) => c.children.length > 0) : [];
 
   // Files = (a) routes terminating at the current path, plus
   //         (b) leaf children (no sub-segments) grouped by their URI.
   const fileGroups: FileGroup[] = [];
 
-  if (node.routes.length > 0) {
-    const uri = browsePath;
-    const name = browsePath === "/" ? "/" : seg(browsePath);
-    fileGroups.push({ uri, name, routes: [...node.routes] });
-  }
-  for (const child of node.children) {
-    if (child.children.length > 0) continue; // it's a folder
-    fileGroups.push({
-      uri: child.path,
-      name: child.segment,
-      routes: [...child.routes],
-    });
+  if (node) {
+    if (node.routes.length > 0) {
+      const uri = browsePath;
+      const name = browsePath === "/" ? "/" : seg(browsePath);
+      fileGroups.push({ uri, name, routes: [...node.routes] });
+    }
+    for (const child of node.children) {
+      if (child.children.length > 0) continue; // it's a folder
+      fileGroups.push({
+        uri: child.path,
+        name: child.segment,
+        routes: [...child.routes],
+      });
+    }
   }
 
   const isEmpty = folders.length === 0 && fileGroups.length === 0;
+  const folderCount = viewMode === "tree" ? tree.routeCount : (node?.routeCount ?? 0);
 
   return (
     <div className="flex h-full flex-col">
@@ -108,33 +118,73 @@ export function RouteBrowser({
             </button>
           </div>
         ))}
-        <span className="ml-auto text-xs text-[var(--etch)]">
-          {node.routeCount} route{node.routeCount === 1 ? "" : "s"} in this folder
-        </span>
+        <div className="ml-auto flex items-center gap-3">
+          <span className="text-xs text-[var(--etch)]">
+            {folderCount} route{folderCount === 1 ? "" : "s"}
+            {viewMode === "tree" ? " total" : " in this folder"}
+          </span>
+          {/* Cards / Tree segmented toggle */}
+          <div className="flex rounded-md border border-[var(--chassis)] p-0.5">
+            <button
+              onClick={() => onViewModeChange("cards")}
+              className={cn(
+                "inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium transition-colors",
+                viewMode === "cards"
+                  ? "bg-[var(--chassis)] text-[var(--flare)]"
+                  : "text-[var(--etch)] hover:text-[var(--flare)]"
+              )}
+              title="Card grid"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              Cards
+            </button>
+            <button
+              onClick={() => onViewModeChange("tree")}
+              className={cn(
+                "inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium transition-colors",
+                viewMode === "tree"
+                  ? "bg-[var(--chassis)] text-[var(--flare)]"
+                  : "text-[var(--etch)] hover:text-[var(--flare)]"
+              )}
+              title="Tree view"
+            >
+              <ListTree className="h-3.5 w-3.5" />
+              Tree
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* Grid */}
-      <div className="min-h-0 flex-1 overflow-y-auto p-5">
-        {isEmpty ? (
-          <div className="flex h-full items-center justify-center text-sm text-[var(--etch)]">
-            No routes in this folder.
-          </div>
-        ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3">
-            {folders.map((f) => (
-              <FolderCard key={f.path} node={f} onBrowse={onBrowse} />
-            ))}
-            {fileGroups.map((g) => (
-              <FileCard
-                key={g.uri}
-                group={g}
-                selected={false}
-                onOpen={onOpenRoute}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      {/* Body */}
+      {viewMode === "tree" ? (
+        <RouteTreeView
+          root={tree}
+          focusPath={browsePath}
+          onOpenRoute={onOpenRoute}
+        />
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+          {isEmpty ? (
+            <div className="flex h-full items-center justify-center text-sm text-[var(--etch)]">
+              No routes in this folder.
+            </div>
+          ) : (
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3">
+              {folders.map((f) => (
+                <FolderCard key={f.path} node={f} onBrowse={onBrowse} />
+              ))}
+              {fileGroups.map((g) => (
+                <FileCard
+                  key={g.uri}
+                  group={g}
+                  selected={false}
+                  onOpen={onOpenRoute}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
