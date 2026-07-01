@@ -101,10 +101,15 @@ export function layoutGraph(
  * lifecycle entry node) starts on the left; files/methods/dependencies branch to
  * the right while siblings stack vertically. This keeps long method labels on
  * their own rows instead of spreading a large file's methods across one level.
+ *
+ * `options.nodeHeight` lets callers supply a per-node rendered height (e.g. for
+ * variable-height ER-style nodes). When omitted, a fixed 84px height is used —
+ * the historical behavior for the route subgraph canvas.
  */
 export function layoutHierarchyGraph(
   graph: Graph,
-  seedIds?: string[]
+  seedIds?: string[],
+  options?: { nodeHeight?: (node: GraphNode) => number }
 ): {
   nodes: (GraphNode & { position: { x: number; y: number } })[];
 } {
@@ -148,25 +153,34 @@ export function layoutHierarchyGraph(
   }
   if (roots.length === 0 && graph.nodes[0]) roots = [graph.nodes[0].id];
 
+  // Per-node own height. Falls back to the fixed base height, and to the same
+  // base on cycle revisit so recursion terminates with a finite estimate.
+  const ownHeight = (id: string): number => {
+    const node = byId.get(id);
+    if (!node) return NODE_HEIGHT;
+    return options?.nodeHeight ? options.nodeHeight(node) : NODE_HEIGHT;
+  };
+
   const measuring = new Set<string>();
   const measured = new Set<string>();
   const subtreeHeight = new Map<string, number>();
 
   const measure = (id: string): number => {
-    if (measured.has(id)) return subtreeHeight.get(id) ?? NODE_HEIGHT;
-    if (measuring.has(id)) return NODE_HEIGHT;
+    if (measured.has(id)) return subtreeHeight.get(id) ?? ownHeight(id);
+    if (measuring.has(id)) return ownHeight(id);
     measuring.add(id);
     const children = (adjacency.get(id) ?? []).filter((child) => byId.has(child));
+    const selfHeight = ownHeight(id);
     if (children.length === 0) {
       measuring.delete(id);
       measured.add(id);
-      subtreeHeight.set(id, NODE_HEIGHT);
-      return NODE_HEIGHT;
+      subtreeHeight.set(id, selfHeight);
+      return selfHeight;
     }
     const childTotal = children.reduce((sum, child, index) => {
       return sum + measure(child) + (index === 0 ? 0 : SIBLING_GAP);
     }, 0);
-    const height = Math.max(NODE_HEIGHT, childTotal);
+    const height = Math.max(selfHeight, childTotal);
     measuring.delete(id);
     measured.add(id);
     subtreeHeight.set(id, height);
@@ -184,46 +198,48 @@ export function layoutHierarchyGraph(
     if (!node) return;
     placed.add(id);
 
-    const height = subtreeHeight.get(id) ?? NODE_HEIGHT;
+    const selfHeight = ownHeight(id);
+    const height = subtreeHeight.get(id) ?? selfHeight;
     positioned.set(id, {
       ...node,
       position: {
         x: PAD_X + depth * LEVEL_WIDTH,
-        y: top + height / 2 - NODE_HEIGHT / 2,
+        y: top + height / 2 - selfHeight / 2,
       },
     });
 
     const children = (adjacency.get(id) ?? []).filter((child) => byId.has(child) && !placed.has(child));
     const childTotal = children.reduce((sum, child, index) => {
-      return sum + (subtreeHeight.get(child) ?? NODE_HEIGHT) + (index === 0 ? 0 : SIBLING_GAP);
+      return sum + (subtreeHeight.get(child) ?? ownHeight(child)) + (index === 0 ? 0 : SIBLING_GAP);
     }, 0);
     let childTop = top + Math.max(0, (height - childTotal) / 2);
     for (const child of children) {
       place(child, childTop, depth + 1);
-      childTop += (subtreeHeight.get(child) ?? NODE_HEIGHT) + SIBLING_GAP;
+      childTop += (subtreeHeight.get(child) ?? ownHeight(child)) + SIBLING_GAP;
     }
   };
 
   let cursor = PAD_Y;
   for (const root of roots) {
-    const height = subtreeHeight.get(root) ?? NODE_HEIGHT;
+    const height = subtreeHeight.get(root) ?? ownHeight(root);
     place(root, cursor, 0);
     cursor += height + SIBLING_GAP;
   }
 
   // Any disconnected leftovers are still rendered, to the right of the main hierarchy.
-  let extraIndex = 0;
   const extraDepth = maxDepth(positioned, PAD_X, LEVEL_WIDTH) + 1;
+  let extraY = PAD_Y;
   for (const n of graph.nodes) {
     if (positioned.has(n.id)) continue;
+    const h = ownHeight(n.id);
     positioned.set(n.id, {
       ...n,
       position: {
         x: PAD_X + extraDepth * LEVEL_WIDTH,
-        y: PAD_Y + extraIndex * (NODE_HEIGHT + SIBLING_GAP),
+        y: extraY,
       },
     });
-    extraIndex++;
+    extraY += h + SIBLING_GAP;
   }
 
   return { nodes: [...positioned.values()] };

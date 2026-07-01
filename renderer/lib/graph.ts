@@ -1,4 +1,4 @@
-import type { NodeType } from "./types";
+import type { Graph, GraphEdge, NodeType } from "./types";
 
 export function displayNodeType(node: GraphNodeLike): NodeType {
   if (node.type !== "method") return node.type;
@@ -180,4 +180,52 @@ export function withAlpha(hex: string, alpha: number): string {
   const g = parseInt(clean.slice(2, 4), 16);
   const b = parseInt(clean.slice(4, 6), 16);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/**
+ * Collect the ids of all edges on the given nodes' lineage: every edge on an
+ * incoming path leading into a root, and every edge on an outgoing path below
+ * it. Sibling branches that merely share an ancestor are intentionally not lit
+ * up. Used to highlight a selected node's full ancestry and descendants on the
+ * graph canvas.
+ */
+export function lineageEdgeIds(graph: Graph, roots: Set<string>): Set<string> {
+  const active = new Set<string>();
+  if (roots.size === 0) return active;
+
+  const outgoing = new Map<string, GraphEdge[]>();
+  const incoming = new Map<string, GraphEdge[]>();
+  for (const edge of graph.edges) {
+    const outbound = outgoing.get(edge.source) ?? [];
+    outbound.push(edge);
+    outgoing.set(edge.source, outbound);
+
+    const inbound = incoming.get(edge.target) ?? [];
+    inbound.push(edge);
+    incoming.set(edge.target, inbound);
+  }
+
+  const visit = (
+    edgeMap: Map<string, GraphEdge[]>,
+    nextNode: (edge: GraphEdge) => string
+  ) => {
+    const visited = new Set<string>();
+    const queue = [...roots];
+    for (let index = 0; index < queue.length; index++) {
+      const nodeId = queue[index];
+      if (visited.has(nodeId)) continue;
+      visited.add(nodeId);
+
+      for (const edge of edgeMap.get(nodeId) ?? []) {
+        active.add(edge.id);
+        const next = nextNode(edge);
+        if (!visited.has(next)) queue.push(next);
+      }
+    }
+  };
+
+  visit(incoming, (edge) => edge.source);
+  visit(outgoing, (edge) => edge.target);
+
+  return active;
 }

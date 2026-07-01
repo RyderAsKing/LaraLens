@@ -171,6 +171,15 @@ export interface ModelRelationship {
   name: string; // method name
 }
 
+export interface MigrationColumn {
+  name: string;
+  type: string; // db type label: varchar, int, bigint, datetime, boolean, ...
+  primary?: boolean;
+  nullable?: boolean;
+  autoIncrement?: boolean;
+  default?: string;
+}
+
 export interface ModelDefinition {
   fqcn: string;
   file: string;
@@ -182,6 +191,8 @@ export interface ModelDefinition {
   primaryKey?: string;
   usesSoftDeletes: boolean;
   timestamps: boolean;
+  /** Columns resolved from the model's migration, when available. */
+  columns?: MigrationColumn[];
 }
 
 export type CallChainType =

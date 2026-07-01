@@ -11,6 +11,7 @@ import { analyzeRoutes } from "./routes";
 import { analyzeMiddleware } from "./middleware";
 import { analyzeControllers } from "./controllers";
 import { analyzeModels } from "./models";
+import { analyzeMigrations } from "./migrations";
 import { traceCallChain } from "./callchain";
 import { analyzeConsole } from "./console";
 import { analyzeEnv } from "./env";
@@ -54,8 +55,11 @@ export async function scanProject(projectRoot: string): Promise<ScanResult> {
   const middlewareRegistry = await analyzeMiddleware(root);
   const controllers = await analyzeControllers(routes, psr4, devPsr4);
 
+  // Migration columns feed the model ER view (fillable alone is often empty).
+  const migrationColumns = await analyzeMigrations(root);
+
   // First-pass model discovery (needed to classify call-chain model hops).
-  const initialModels = await analyzeModels(root, psr4, devPsr4);
+  const initialModels = await analyzeModels(root, psr4, devPsr4, [], migrationColumns);
   const modelFqcns = new Set(initialModels.keys());
 
   const callChain = traceCallChain(controllers, psr4, devPsr4, modelFqcns);
@@ -67,7 +71,7 @@ export async function scanProject(projectRoot: string): Promise<ScanResult> {
     .filter((f) => !initialModels.has(f));
   const models =
     extraModelFqcns.length > 0
-      ? await analyzeModels(root, psr4, devPsr4, extraModelFqcns)
+      ? await analyzeModels(root, psr4, devPsr4, extraModelFqcns, migrationColumns)
       : initialModels;
 
   const { commands, schedules } = await analyzeConsole(root, psr4);

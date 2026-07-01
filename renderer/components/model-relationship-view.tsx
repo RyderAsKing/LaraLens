@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -14,51 +14,136 @@ import {
   BackgroundVariant,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { NodeCard, type LaraLensNodeData } from "./node-card";
+import { Boxes, Tags } from "lucide-react";
+import { ModelNodeCard, modelNodeHeight } from "./model-node-card";
+import { type LaraLensNodeData } from "./node-card";
 import { layoutHierarchyGraph } from "@/lib/layout";
-import { ACCENT_COLORS, displayNodeType, lineageEdgeIds, nodeSubtitle } from "@/lib/graph";
-import { buildRouteDevelopmentSubgraph, subgraphSeedIds } from "@/lib/route-tree";
+import { ACCENT_COLORS, displayNodeType, nodeSubtitle } from "@/lib/graph";
+import {
+  buildModelRelationshipGraph,
+  modelRelationshipSeedIds,
+  modelRelationshipStats,
+} from "@/lib/model-relationships";
 import { logMissingNodeLocation, nodeLocation } from "@/lib/node-location";
 import type { Graph, GraphNode } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
-const nodeTypes: NodeTypes = { laraNode: NodeCard };
+const nodeTypes: NodeTypes = { laraNode: ModelNodeCard };
 
-interface RouteSubgraphViewProps {
+interface ModelRelationshipViewProps {
   graph: Graph;
-  routeId: string;
-  withLifecycle: boolean;
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+}
+
+export function ModelRelationshipView({
+  graph,
+  selectedId,
+  onSelect,
+}: ModelRelationshipViewProps) {
+  const [showEdgeLabels, setShowEdgeLabels] = useState(false);
+  const stats = useMemo(() => modelRelationshipStats(graph), [graph]);
+
+  if (stats.modelCount === 0) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center p-8 text-center">
+        <Boxes className="mb-3 h-8 w-8 text-[var(--etch)]" />
+        <p className="text-sm text-[var(--etch)]">
+          No Eloquent models were found in this project.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Header */}
+      <div className="shrink-0 border-b border-[var(--chassis)] px-5 py-3">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Boxes className="h-4 w-4" style={{ color: ACCENT_COLORS.model }} />
+            <span className="text-sm font-semibold text-[var(--flare)]">
+              Models
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs text-[var(--etch)]">
+            <span className="tabular-nums">
+              {stats.modelCount} {stats.modelCount === 1 ? "model" : "models"}
+            </span>
+            <span aria-hidden>·</span>
+            <span className="tabular-nums">
+              {stats.relationshipCount}{" "}
+              {stats.relationshipCount === 1 ? "relationship" : "relationships"}
+            </span>
+            {stats.relationshipCount === 0 ? (
+              <span className="text-[var(--etch)]">
+                · No Eloquent relationships detected
+              </span>
+            ) : null}
+          </div>
+
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowEdgeLabels((v) => !v)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+                showEdgeLabels
+                  ? "border-[var(--aperture)]/30 bg-[var(--aperture)]/10 text-[var(--flare)]"
+                  : "border-[var(--chassis)] text-[var(--etch)] hover:text-[var(--flare)] hover:bg-[var(--accent)]"
+              )}
+              title="Toggle relationship labels on graph edges"
+            >
+              <Tags className="h-3.5 w-3.5" />
+              Edge labels
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <ReactFlowProvider>
+          <ModelRelationshipCanvas
+            graph={graph}
+            showEdgeLabels={showEdgeLabels}
+            selectedId={selectedId}
+            onSelect={onSelect}
+          />
+        </ReactFlowProvider>
+      </div>
+    </div>
+  );
+}
+
+interface ModelRelationshipCanvasProps {
+  graph: Graph;
   showEdgeLabels: boolean;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
 }
 
-function RouteSubgraphCanvas({
+function ModelRelationshipCanvas({
   graph,
-  routeId,
-  withLifecycle,
   showEdgeLabels,
   selectedId,
   onSelect,
-}: RouteSubgraphViewProps) {
+}: ModelRelationshipCanvasProps) {
   const subgraph = useMemo(
-    () => buildRouteDevelopmentSubgraph(graph, routeId, withLifecycle),
-    [graph, routeId, withLifecycle]
+    () => buildModelRelationshipGraph(graph),
+    [graph]
   );
 
   const seedIds = useMemo(
-    () => subgraphSeedIds(withLifecycle),
-    [withLifecycle]
+    () => modelRelationshipSeedIds(subgraph),
+    [subgraph]
   );
 
   const { nodes: laidOut, edges } = useMemo(() => {
-    const { nodes: positioned } = layoutHierarchyGraph(subgraph, seedIds);
-    const selectedSubgraphNodeIds = new Set(
-      positioned
-        .filter((n) => n.id === selectedId || n.data.originalNodeId === selectedId)
-        .map((n) => n.id)
-    );
-    const activeEdgeIds = lineageEdgeIds(subgraph, selectedSubgraphNodeIds);
-
+    const { nodes: positioned } = layoutHierarchyGraph(subgraph, seedIds, {
+      nodeHeight: modelNodeHeight,
+    });
     const rfNodes: Node<LaraLensNodeData>[] = positioned.map(
       (n: GraphNode & { position: { x: number; y: number } }) => {
         const nodeType = displayNodeType(n);
@@ -73,13 +158,13 @@ function RouteSubgraphCanvas({
             subtitle: nodeSubtitle(n),
             accent: ACCENT_COLORS[nodeType],
           },
-          selected: n.id === selectedId || n.data.originalNodeId === selectedId,
+          selected: n.id === selectedId,
         };
       }
     );
 
     const rfEdges: Edge[] = subgraph.edges.map((e) => {
-      const active = activeEdgeIds.has(e.id);
+      const active = selectedId !== null && (e.source === selectedId || e.target === selectedId);
       return {
         id: e.id,
         source: e.source,
@@ -125,23 +210,18 @@ function RouteSubgraphCanvas({
 
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
-      const graphNode = subgraph.nodes.find((n) => n.id === node.id);
-      const originalNodeId = graphNode?.data.originalNodeId;
-      onSelect(typeof originalNodeId === "string" ? originalNodeId : node.id);
+      onSelect(node.id);
     },
-    [onSelect, subgraph]
+    [onSelect]
   );
 
   const handleNodeDoubleClick = useCallback(
     async (_: React.MouseEvent, node: Node) => {
       const graphNode = subgraph.nodes.find((n) => n.id === node.id);
-      const originalNodeId = graphNode?.data.originalNodeId;
-      const originalNode = typeof originalNodeId === "string"
-        ? graph.nodes.find((n) => n.id === originalNodeId)
-        : undefined;
-      const location = nodeLocation(graphNode, subgraph) ?? nodeLocation(originalNode, graph) ?? nodeLocation(graph.nodes.find((n) => n.id === node.id), graph);
+      const location =
+        nodeLocation(graphNode, subgraph) ?? nodeLocation(graphNode, graph);
       if (!location) {
-        logMissingNodeLocation(graphNode ?? originalNode ?? graph.nodes.find((n) => n.id === node.id), graph, "graph node double-click");
+        logMissingNodeLocation(graphNode, graph, "model node double-click");
         return;
       }
       try {
@@ -190,13 +270,5 @@ function RouteSubgraphCanvas({
         />
       </ReactFlow>
     </div>
-  );
-}
-
-export function RouteSubgraphView(props: RouteSubgraphViewProps) {
-  return (
-    <ReactFlowProvider>
-      <RouteSubgraphCanvas {...props} />
-    </ReactFlowProvider>
   );
 }

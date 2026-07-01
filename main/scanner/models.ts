@@ -22,7 +22,8 @@ import {
   classConstName,
 } from "./php";
 import { resolveFqcn } from "./psr4";
-import type { ModelDefinition, ModelRelationship, Psr4Map } from "./types";
+import { laravelTableName } from "./migrations";
+import type { ModelDefinition, ModelRelationship, MigrationColumn, Psr4Map } from "./types";
 
 const RELATIONSHIP_METHODS = new Set([
   "hasMany",
@@ -102,7 +103,8 @@ export async function analyzeModels(
   projectRoot: string,
   psr4: Psr4Map,
   devPsr4: Psr4Map = {},
-  extraFqcns: string[] = []
+  extraFqcns: string[] = [],
+  migrationColumns: Map<string, MigrationColumn[]> = new Map()
 ): Promise<Map<string, ModelDefinition>> {
   const discovered = await discoverModels(projectRoot, psr4);
   const fqcnSet = new Set<string>(discovered.map((m) => m.fqcn));
@@ -110,7 +112,7 @@ export async function analyzeModels(
 
   const out = new Map<string, ModelDefinition>();
   for (const { fqcn, file } of discovered) {
-    const def = await analyzeModelFile(fqcn, file, psr4, devPsr4);
+    const def = await analyzeModelFile(fqcn, file, psr4, devPsr4, migrationColumns);
     if (def) out.set(fqcn, def);
   }
   // Analyze extra FQCNs from the call chain that weren't discovered.
@@ -118,7 +120,7 @@ export async function analyzeModels(
     if (out.has(fqcn)) continue;
     const file = resolveFqcn(fqcn, psr4, devPsr4);
     if (!file || !existsSync(file)) continue;
-    const def = await analyzeModelFile(fqcn, file, psr4, devPsr4);
+    const def = await analyzeModelFile(fqcn, file, psr4, devPsr4, migrationColumns);
     if (def) out.set(fqcn, def);
   }
   return out;
@@ -128,7 +130,8 @@ async function analyzeModelFile(
   fqcn: string,
   file: string,
   psr4: Psr4Map,
-  _devPsr4: Psr4Map
+  _devPsr4: Psr4Map,
+  migrationColumns: Map<string, MigrationColumn[]>
 ): Promise<ModelDefinition | null> {
   const source = await fs.readFile(file, "utf8").catch(() => "");
   if (!source) return null;
@@ -171,6 +174,12 @@ async function analyzeModelFile(
   const usesSoftDeletes = cls.traits.some((t) => t === "SoftDeletes" || t.endsWith("\\SoftDeletes"));
   const timestamps = readBoolProperty(cls, "timestamps", true);
 
+  // Resolve the model's table name (explicit $table property or Laravel's
+  // snake-case plural convention) and join migration columns onto the model.
+  const shortName = fqcn.split("\\").pop() ?? fqcn;
+  const tableName = table ?? laravelTableName(shortName);
+  const columns = migrationColumns.get(tableName);
+
   return {
     fqcn,
     file,
@@ -182,6 +191,7 @@ async function analyzeModelFile(
     primaryKey,
     usesSoftDeletes,
     timestamps,
+    columns,
   };
 }
 

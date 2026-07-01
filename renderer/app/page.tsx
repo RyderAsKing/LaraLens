@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Toolbar } from "@/components/toolbar";
+import { Toolbar, type FeatureMode } from "@/components/toolbar";
 import { Inspector } from "@/components/inspector";
 import { RouteBrowser, type RouteViewMode } from "@/components/route-browser";
 import { RouteDetail } from "@/components/route-detail";
+import { ModelRelationshipView } from "@/components/model-relationship-view";
 import { EmptyState, type RecentProject } from "@/components/empty-state";
 import { useScan } from "@/hooks/use-scan";
 
@@ -24,6 +25,7 @@ export default function Page() {
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [browsePath, setBrowsePath] = useState<string>("/");
   const [routeViewMode, setRouteViewMode] = useState<RouteViewMode>("cards");
+  const [featureMode, setFeatureMode] = useState<FeatureMode>("routes");
   const [showHome, setShowHome] = useState(false);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
 
@@ -107,6 +109,14 @@ export default function Page() {
     setShowHome(true);
   }, []);
 
+  const handleFeatureModeChange = useCallback((mode: FeatureMode) => {
+    setFeatureMode(mode);
+    setSelectedId(null);
+    setSelectedRouteId(null);
+    setBrowsePath("/");
+    setShowHome(false);
+  }, []);
+
   const showEmpty = showHome || status !== "success" || !graph || graph.nodes.length === 0;
 
   return (
@@ -116,6 +126,8 @@ export default function Page() {
         projectName={graph?.meta.project ?? "Laravel Project"}
         summary={summary}
         status={status}
+        featureMode={featureMode}
+        onFeatureModeChange={handleFeatureModeChange}
         onHome={handleHome}
         onPickAndScan={handlePickAndScan}
         onRescan={handleRescan}
@@ -134,7 +146,13 @@ export default function Page() {
       ) : (
         <div className="flex min-h-0 flex-1 overflow-hidden">
           <main className="relative min-h-0 flex-1 overflow-hidden">
-            {selectedRouteId ? (
+            {featureMode === "models" ? (
+              <ModelRelationshipView
+                graph={graph!}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+              />
+            ) : selectedRouteId ? (
               <RouteDetail
                 graph={graph!}
                 routeId={selectedRouteId}

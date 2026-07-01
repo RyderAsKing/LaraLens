@@ -50,6 +50,15 @@ export interface GraphEdge {
   type: string;
 }
 
+export interface MigrationColumn {
+  name: string;
+  type: string;
+  primary?: boolean;
+  nullable?: boolean;
+  autoIncrement?: boolean;
+  default?: string;
+}
+
 export interface Graph {
   meta: {
     project: string;

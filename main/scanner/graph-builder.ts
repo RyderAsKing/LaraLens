@@ -345,6 +345,7 @@ export class GraphBuilder {
         primaryKey: m.primaryKey,
         usesSoftDeletes: m.usesSoftDeletes,
         timestamps: m.timestamps,
+        columns: m.columns,
       });
       for (const rel of m.relationships) {
         if (!rel.related) continue;
