@@ -37,7 +37,7 @@ function NodeCardComponent({ data, selected }: NodeProps) {
     >
       <Handle
         type="target"
-        position={Position.Top}
+        position={Position.Left}
         className="!h-2 !w-2 !border-0"
         style={{ background: accent }}
       />
@@ -60,17 +60,17 @@ function NodeCardComponent({ data, selected }: NodeProps) {
           </button>
         ) : null}
       </div>
-      <div className="mt-2 truncate font-[family-name:var(--font-display)] text-[15px] font-medium tracking-[-0.01em] text-[var(--flare)]">
+      <div className="mt-1.5 truncate font-[family-name:var(--font-display)] text-[15px] font-medium tracking-[-0.01em] text-[var(--flare)]">
         {d.label}
       </div>
       {d.subtitle ? (
-        <div className="mt-1 truncate font-mono text-[11px] text-[var(--etch)]">
+        <div className="mt-0.5 truncate font-mono text-[10px] text-[var(--etch)]">
           {d.subtitle}
         </div>
       ) : null}
       <Handle
         type="source"
-        position={Position.Bottom}
+        position={Position.Right}
         className="!h-2 !w-2 !border-0"
         style={{ background: accent }}
       />

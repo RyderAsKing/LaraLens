@@ -12,6 +12,7 @@
 import type { Graph, GraphEdge, GraphNode, NodeType } from "./types";
 import { buildLifecycleChain, LIFECYCLE_IDS } from "./lifecycle";
 import { nodeLocation } from "./node-location";
+import { displayHttpMethod } from "./graph";
 
 /* -------------------------------------------------------------------------- */
 /* URI prefix tree (Route Explorer sidebar)                                   */
@@ -483,7 +484,7 @@ function makeMethodNode(sourceNode: GraphNode, file?: string, line?: number): Gr
 }
 
 function methodName(node: GraphNode): string {
-  if (node.type === "route") return String(node.data.method ?? "Route").toUpperCase();
+  if (node.type === "route") return displayHttpMethod(node.data.method) || "Route";
   if (node.type === "middleware") return "handle";
   if (node.type === "controller") return node.label;
   if (node.type === "validation_request") return "rules";
@@ -492,9 +493,9 @@ function methodName(node: GraphNode): string {
 
 function methodLabel(node: GraphNode): string {
   if (node.type === "route") {
-    return `${String(node.data.method ?? "").toUpperCase()} ${String(node.data.uri ?? node.label)}`.trim();
+    return `${displayHttpMethod(node.data.method)} ${String(node.data.uri ?? node.label)}`.trim();
   }
-  if (node.type === "middleware") return "handle()";
+  if (node.type === "middleware") return `${middlewareDisplayName(node)} · handle()`;
   if (node.type === "controller") return node.label;
   if (node.type === "validation_request") return "rules()";
   const method = methodName(node);
@@ -504,8 +505,14 @@ function methodLabel(node: GraphNode): string {
 function methodSignature(node: GraphNode): string {
   const fqcn = String(node.data.fqcn ?? "");
   const method = methodName(node);
-  if (node.type === "route") return `${node.data.method ?? ""} ${node.data.uri ?? ""}`.trim();
+  if (node.type === "route") return `${displayHttpMethod(node.data.method)} ${node.data.uri ?? ""}`.trim();
   return fqcn ? `${fqcn}::${method}` : method;
+}
+
+function middlewareDisplayName(node: GraphNode): string {
+  const alias = String(node.data.alias ?? "");
+  if (alias) return alias;
+  return node.label || String(node.data.fqcn ?? "Middleware");
 }
 
 function basename(file: string): string {

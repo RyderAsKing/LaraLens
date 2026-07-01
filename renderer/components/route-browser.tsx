@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { Folder, FileCode, ChevronRight, Home } from "lucide-react";
 import { buildRouteUriTree } from "@/lib/route-tree";
 import type { UriTreeNode } from "@/lib/route-tree";
-import { methodBadgeClass } from "@/lib/graph";
+import { displayHttpMethod, methodBadgeClass } from "@/lib/graph";
 import type { Graph, GraphNode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -191,9 +191,9 @@ function FileCard({
 }) {
   const first = group.routes[0];
   if (!first) return null;
-  const methods = group.routes
-    .map((r) => String(r.data.method ?? "").toUpperCase())
-    .filter(Boolean);
+  const methods = [...new Set(group.routes
+    .map((r) => displayHttpMethod(r.data.method))
+    .filter(Boolean))];
   const name = String(first.data.name ?? "");
   const controller = String(first.data.controller ?? first.data.action ?? "");
   const displayName = name || group.name;

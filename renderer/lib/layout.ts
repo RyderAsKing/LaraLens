@@ -97,9 +97,10 @@ export function layoutGraph(
 }
 
 /**
- * Top-down hierarchy layout for a single route subgraph. The selected route (or
- * lifecycle entry node) is centered at the top; controllers/actions/dependencies
- * fan out below their parent with generous spacing for readable labels.
+ * Left-to-right tree layout for a single route subgraph. The selected route (or
+ * lifecycle entry node) starts on the left; files/methods/dependencies branch to
+ * the right while siblings stack vertically. This keeps long method labels on
+ * their own rows instead of spreading a large file's methods across one level.
  */
 export function layoutHierarchyGraph(
   graph: Graph,
@@ -107,9 +108,9 @@ export function layoutHierarchyGraph(
 ): {
   nodes: (GraphNode & { position: { x: number; y: number } })[];
 } {
-  const NODE_WIDTH = 260;
-  const SIBLING_GAP = 72;
-  const LEVEL_HEIGHT = 150;
+  const NODE_HEIGHT = 84;
+  const LEVEL_WIDTH = 390;
+  const SIBLING_GAP = 56;
   const PAD_X = 80;
   const PAD_Y = 56;
 
@@ -147,23 +148,29 @@ export function layoutHierarchyGraph(
   }
   if (roots.length === 0 && graph.nodes[0]) roots = [graph.nodes[0].id];
 
-  const visitedForWidth = new Set<string>();
-  const subtreeWidth = new Map<string, number>();
+  const measuring = new Set<string>();
+  const measured = new Set<string>();
+  const subtreeHeight = new Map<string, number>();
 
   const measure = (id: string): number => {
-    if (visitedForWidth.has(id)) return NODE_WIDTH;
-    visitedForWidth.add(id);
+    if (measured.has(id)) return subtreeHeight.get(id) ?? NODE_HEIGHT;
+    if (measuring.has(id)) return NODE_HEIGHT;
+    measuring.add(id);
     const children = (adjacency.get(id) ?? []).filter((child) => byId.has(child));
     if (children.length === 0) {
-      subtreeWidth.set(id, NODE_WIDTH);
-      return NODE_WIDTH;
+      measuring.delete(id);
+      measured.add(id);
+      subtreeHeight.set(id, NODE_HEIGHT);
+      return NODE_HEIGHT;
     }
     const childTotal = children.reduce((sum, child, index) => {
       return sum + measure(child) + (index === 0 ? 0 : SIBLING_GAP);
     }, 0);
-    const width = Math.max(NODE_WIDTH, childTotal);
-    subtreeWidth.set(id, width);
-    return width;
+    const height = Math.max(NODE_HEIGHT, childTotal);
+    measuring.delete(id);
+    measured.add(id);
+    subtreeHeight.set(id, height);
+    return height;
   };
 
   roots.forEach(measure);
@@ -171,48 +178,49 @@ export function layoutHierarchyGraph(
   const positioned = new Map<string, GraphNode & { position: { x: number; y: number } }>();
   const placed = new Set<string>();
 
-  const place = (id: string, left: number, depth: number) => {
+  const place = (id: string, top: number, depth: number) => {
     if (placed.has(id)) return;
     const node = byId.get(id);
     if (!node) return;
     placed.add(id);
 
-    const width = subtreeWidth.get(id) ?? NODE_WIDTH;
+    const height = subtreeHeight.get(id) ?? NODE_HEIGHT;
     positioned.set(id, {
       ...node,
       position: {
-        x: left + width / 2 - NODE_WIDTH / 2,
-        y: PAD_Y + depth * LEVEL_HEIGHT,
+        x: PAD_X + depth * LEVEL_WIDTH,
+        y: top + height / 2 - NODE_HEIGHT / 2,
       },
     });
 
     const children = (adjacency.get(id) ?? []).filter((child) => byId.has(child) && !placed.has(child));
     const childTotal = children.reduce((sum, child, index) => {
-      return sum + (subtreeWidth.get(child) ?? NODE_WIDTH) + (index === 0 ? 0 : SIBLING_GAP);
+      return sum + (subtreeHeight.get(child) ?? NODE_HEIGHT) + (index === 0 ? 0 : SIBLING_GAP);
     }, 0);
-    let childLeft = left + Math.max(0, (width - childTotal) / 2);
+    let childTop = top + Math.max(0, (height - childTotal) / 2);
     for (const child of children) {
-      place(child, childLeft, depth + 1);
-      childLeft += (subtreeWidth.get(child) ?? NODE_WIDTH) + SIBLING_GAP;
+      place(child, childTop, depth + 1);
+      childTop += (subtreeHeight.get(child) ?? NODE_HEIGHT) + SIBLING_GAP;
     }
   };
 
-  let cursor = PAD_X;
+  let cursor = PAD_Y;
   for (const root of roots) {
-    const width = subtreeWidth.get(root) ?? NODE_WIDTH;
+    const height = subtreeHeight.get(root) ?? NODE_HEIGHT;
     place(root, cursor, 0);
-    cursor += width + SIBLING_GAP;
+    cursor += height + SIBLING_GAP;
   }
 
-  // Any disconnected leftovers are still rendered, beneath the main hierarchy.
+  // Any disconnected leftovers are still rendered, to the right of the main hierarchy.
   let extraIndex = 0;
+  const extraDepth = maxDepth(positioned, PAD_X, LEVEL_WIDTH) + 1;
   for (const n of graph.nodes) {
     if (positioned.has(n.id)) continue;
     positioned.set(n.id, {
       ...n,
       position: {
-        x: PAD_X + extraIndex * (NODE_WIDTH + SIBLING_GAP),
-        y: PAD_Y + (maxDepth(positioned) + 1) * LEVEL_HEIGHT,
+        x: PAD_X + extraDepth * LEVEL_WIDTH,
+        y: PAD_Y + extraIndex * (NODE_HEIGHT + SIBLING_GAP),
       },
     });
     extraIndex++;
@@ -221,10 +229,14 @@ export function layoutHierarchyGraph(
   return { nodes: [...positioned.values()] };
 }
 
-function maxDepth(nodes: Map<string, GraphNode & { position: { x: number; y: number } }>): number {
+function maxDepth(
+  nodes: Map<string, GraphNode & { position: { x: number; y: number } }>,
+  padX: number,
+  levelWidth: number
+): number {
   let max = 0;
   for (const n of nodes.values()) {
-    max = Math.max(max, Math.round((n.position.y - 56) / 150));
+    max = Math.max(max, Math.round((n.position.x - padX) / levelWidth));
   }
   return max;
 }

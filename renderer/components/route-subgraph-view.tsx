@@ -16,7 +16,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { NodeCard, type LaraLensNodeData } from "./node-card";
 import { layoutHierarchyGraph } from "@/lib/layout";
-import { ACCENT_COLORS, nodeSubtitle } from "@/lib/graph";
+import { ACCENT_COLORS, displayNodeType, nodeSubtitle } from "@/lib/graph";
 import { buildRouteDevelopmentSubgraph, subgraphSeedIds } from "@/lib/route-tree";
 import { logMissingNodeLocation, nodeLocation } from "@/lib/node-location";
 import type { Graph, GraphNode } from "@/lib/types";
@@ -27,6 +27,7 @@ interface RouteSubgraphViewProps {
   graph: Graph;
   routeId: string;
   withLifecycle: boolean;
+  showEdgeLabels: boolean;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
 }
@@ -35,6 +36,7 @@ function RouteSubgraphCanvas({
   graph,
   routeId,
   withLifecycle,
+  showEdgeLabels,
   selectedId,
   onSelect,
 }: RouteSubgraphViewProps) {
@@ -50,37 +52,59 @@ function RouteSubgraphCanvas({
 
   const { nodes: laidOut, edges } = useMemo(() => {
     const { nodes: positioned } = layoutHierarchyGraph(subgraph, seedIds);
+    const selectedSubgraphNodeIds = new Set(
+      positioned
+        .filter((n) => n.id === selectedId || n.data.originalNodeId === selectedId)
+        .map((n) => n.id)
+    );
+    const activeEdgeIds = lineageEdgeIds(subgraph, selectedSubgraphNodeIds);
 
     const rfNodes: Node<LaraLensNodeData>[] = positioned.map(
-      (n: GraphNode & { position: { x: number; y: number } }) => ({
-        id: n.id,
-        type: "laraNode",
-        position: n.position,
-        data: {
-          label: n.label,
-          nodeType: n.type,
-          subtitle: nodeSubtitle(n),
-          accent: ACCENT_COLORS[n.type],
-          ...n.data,
-        },
-        selected: n.id === selectedId || n.data.originalNodeId === selectedId,
-      })
+      (n: GraphNode & { position: { x: number; y: number } }) => {
+        const nodeType = displayNodeType(n);
+        return {
+          id: n.id,
+          type: "laraNode",
+          position: n.position,
+          data: {
+            ...n.data,
+            label: n.label,
+            nodeType,
+            subtitle: nodeSubtitle(n),
+            accent: ACCENT_COLORS[nodeType],
+          },
+          selected: n.id === selectedId || n.data.originalNodeId === selectedId,
+        };
+      }
     );
 
-    const rfEdges: Edge[] = subgraph.edges.map((e) => ({
-      id: e.id,
-      source: e.source,
-      target: e.target,
-      label: e.label,
-      type: "smoothstep",
-      animated: false,
-      style: { stroke: "var(--border)", strokeWidth: 1.4 },
-      labelStyle: { fontSize: 12, fill: "var(--muted-foreground)" },
-      labelBgStyle: { fill: "var(--card)" },
-    }));
+    const rfEdges: Edge[] = subgraph.edges.map((e) => {
+      const active = activeEdgeIds.has(e.id);
+      return {
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        label: showEdgeLabels || active ? e.label : undefined,
+        type: "smoothstep",
+        animated: active,
+        style: {
+          stroke: active ? "var(--aperture)" : "var(--border)",
+          strokeWidth: active ? 1.8 : 1,
+          opacity: active ? 0.95 : 0.72,
+        },
+        labelStyle: {
+          fontSize: active ? 11 : 10,
+          fontWeight: active ? 600 : 400,
+          fill: active ? "var(--flare)" : "var(--muted-foreground)",
+        },
+        labelBgStyle: { fill: "var(--card)", fillOpacity: active ? 0.96 : 0.9 },
+        labelBgPadding: [4, 2],
+        labelBgBorderRadius: 3,
+      };
+    });
 
     return { nodes: rfNodes, edges: rfEdges };
-  }, [subgraph, seedIds, selectedId]);
+  }, [subgraph, seedIds, selectedId, showEdgeLabels]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(laidOut);
   const [edgesState, setEdges, onEdgesChange] = useEdgesState(edges);
@@ -145,7 +169,7 @@ function RouteSubgraphCanvas({
         onPaneClick={handlePaneClick}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.35, maxZoom: 1.1 }}
+        fitViewOptions={{ padding: 0.45, maxZoom: 1 }}
         proOptions={{ hideAttribution: true }}
         minZoom={0.2}
         maxZoom={2.5}
@@ -175,4 +199,49 @@ export function RouteSubgraphView(props: RouteSubgraphViewProps) {
       <RouteSubgraphCanvas {...props} />
     </ReactFlowProvider>
   );
+}
+
+function lineageEdgeIds(graph: Graph, roots: Set<string>): Set<string> {
+  const active = new Set<string>();
+  if (roots.size === 0) return active;
+
+  const outgoing = new Map<string, typeof graph.edges>();
+  const incoming = new Map<string, typeof graph.edges>();
+  for (const edge of graph.edges) {
+    const outbound = outgoing.get(edge.source) ?? [];
+    outbound.push(edge);
+    outgoing.set(edge.source, outbound);
+
+    const inbound = incoming.get(edge.target) ?? [];
+    inbound.push(edge);
+    incoming.set(edge.target, inbound);
+  }
+
+  const visit = (
+    edgeMap: Map<string, typeof graph.edges>,
+    nextNode: (edge: Graph["edges"][number]) => string
+  ) => {
+    const visited = new Set<string>();
+    const queue = [...roots];
+    for (let index = 0; index < queue.length; index++) {
+      const nodeId = queue[index];
+      if (visited.has(nodeId)) continue;
+      visited.add(nodeId);
+
+      for (const edge of edgeMap.get(nodeId) ?? []) {
+        active.add(edge.id);
+        const next = nextNode(edge);
+        if (!visited.has(next)) queue.push(next);
+      }
+    }
+  };
+
+  // Highlight the selected node's lineage: all incoming path edges leading into
+  // it, plus all outgoing path edges below it. Avoid walking outward from
+  // ancestors so sibling branches do not light up just because they share a
+  // controller or file.
+  visit(incoming, (edge) => edge.source);
+  visit(outgoing, (edge) => edge.target);
+
+  return active;
 }

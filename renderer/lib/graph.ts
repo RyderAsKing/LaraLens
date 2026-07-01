@@ -1,5 +1,18 @@
 import type { NodeType } from "./types";
 
+export function displayNodeType(node: GraphNodeLike): NodeType {
+  if (node.type !== "method") return node.type;
+  const originalType = node.data.originalNodeType;
+  return isNodeType(originalType) ? originalType : node.type;
+}
+
+export function displayHttpMethod(method: unknown): string {
+  const raw = String(method ?? "").toUpperCase().trim();
+  if (!raw) return "";
+  const parts = raw.split(/[|,\s]+/).filter(Boolean);
+  return parts[0] ?? raw;
+}
+
 /** Optical-accent color mapping — warm, muted, harmonious. */
 export const ACCENT_COLORS: Record<NodeType, string> = {
   route: "#5A9B8E",
@@ -72,9 +85,9 @@ export const TYPE_LABELS: Record<NodeType, string> = {
 /** Human-readable label for a node's primary data field, used in the inspector. */
 export function nodeSubtitle(node: GraphNodeLike): string {
   const d = node.data;
-  switch (node.type) {
+  switch (displayNodeType(node)) {
     case "route":
-      return `${d.method ?? ""} ${d.uri ?? ""}`.trim();
+      return `${displayHttpMethod(d.method)} ${d.uri ?? ""}`.trim();
     case "command":
       return (d.signature as string) ?? (d.class as string) ?? "";
     case "channel":
@@ -110,6 +123,10 @@ export function nodeSubtitle(node: GraphNodeLike): string {
     default:
       return "";
   }
+}
+
+function isNodeType(value: unknown): value is NodeType {
+  return typeof value === "string" && value in TYPE_LABELS;
 }
 
 interface GraphNodeLike {

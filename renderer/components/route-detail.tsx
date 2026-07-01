@@ -6,6 +6,7 @@ import {
   ListTree,
   Network,
   Activity,
+  Tags,
   ChevronDown,
   ChevronRight,
   MousePointerClick,
@@ -14,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { RouteSubgraphView } from "./route-subgraph-view";
 import { buildDisplayTree, routesAtUri } from "@/lib/route-tree";
 import type { DescendantTreeNode } from "@/lib/route-tree";
-import { ACCENT_COLORS, TYPE_LABELS, methodBadgeClass, nodeSubtitle } from "@/lib/graph";
+import { ACCENT_COLORS, TYPE_LABELS, displayHttpMethod, methodBadgeClass, nodeSubtitle } from "@/lib/graph";
 import { logMissingNodeLocation, nodeLocation } from "@/lib/node-location";
 import type { Graph } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -40,6 +41,7 @@ export function RouteDetail({
 }: RouteDetailProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("tree");
   const [lifecycle, setLifecycle] = useState(false);
+  const [showEdgeLabels, setShowEdgeLabels] = useState(false);
 
   const route = useMemo(
     () => graph.nodes.find((n) => n.id === routeId) ?? null,
@@ -67,7 +69,7 @@ export function RouteDetail({
     );
   }
 
-  const method = String(route.data.method ?? "").toUpperCase();
+  const method = displayHttpMethod(route.data.method);
   const uri = String(route.data.uri ?? "");
   const name = String(route.data.name ?? "");
 
@@ -117,6 +119,22 @@ export function RouteDetail({
               Lifecycle
             </button>
 
+            {viewMode === "graph" ? (
+              <button
+                onClick={() => setShowEdgeLabels((v) => !v)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+                  showEdgeLabels
+                    ? "border-[var(--aperture)]/30 bg-[var(--aperture)]/10 text-[var(--flare)]"
+                    : "border-[var(--chassis)] text-[var(--etch)] hover:text-[var(--flare)] hover:bg-[var(--accent)]"
+                )}
+                title="Toggle relationship labels on graph edges"
+              >
+                <Tags className="h-3.5 w-3.5" />
+                Edge labels
+              </button>
+            ) : null}
+
             {/* Tree / Graph segmented toggle */}
             <div className="flex rounded-md border border-[var(--chassis)] p-0.5">
               <button
@@ -151,7 +169,7 @@ export function RouteDetail({
         {siblings.length > 1 && (
           <div className="mt-2.5 flex flex-wrap items-center gap-1">
             {siblings.map((s) => {
-              const m = String(s.data.method ?? "").toUpperCase();
+              const m = displayHttpMethod(s.data.method);
               const active = s.id === routeId;
               return (
                 <button
@@ -187,6 +205,7 @@ export function RouteDetail({
             graph={graph}
             routeId={routeId}
             withLifecycle={lifecycle}
+            showEdgeLabels={showEdgeLabels}
             selectedId={selectedId}
             onSelect={onSelect}
           />
