@@ -103,21 +103,27 @@ export function layoutGraph(
  * their own rows instead of spreading a large file's methods across one level.
  *
  * `options.nodeHeight` lets callers supply a per-node rendered height (e.g. for
- * variable-height ER-style nodes). When omitted, a fixed 84px height is used —
- * the historical behavior for the route subgraph canvas.
+ * variable-height ER-style nodes). Spacing and padding options let denser views
+ * tune the tree without changing the historical route subgraph defaults.
  */
 export function layoutHierarchyGraph(
   graph: Graph,
   seedIds?: string[],
-  options?: { nodeHeight?: (node: GraphNode) => number }
+  options?: {
+    nodeHeight?: (node: GraphNode) => number;
+    levelWidth?: number;
+    siblingGap?: number;
+    padX?: number;
+    padY?: number;
+  }
 ): {
   nodes: (GraphNode & { position: { x: number; y: number } })[];
 } {
   const NODE_HEIGHT = 84;
-  const LEVEL_WIDTH = 390;
-  const SIBLING_GAP = 56;
-  const PAD_X = 80;
-  const PAD_Y = 56;
+  const LEVEL_WIDTH = options?.levelWidth ?? 390;
+  const SIBLING_GAP = options?.siblingGap ?? 56;
+  const PAD_X = options?.padX ?? 80;
+  const PAD_Y = options?.padY ?? 56;
 
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   const adjacency = new Map<string, string[]>();
@@ -153,26 +159,46 @@ export function layoutHierarchyGraph(
   }
   if (roots.length === 0 && graph.nodes[0]) roots = [graph.nodes[0].id];
 
-  // Per-node own height. Falls back to the fixed base height, and to the same
-  // base on cycle revisit so recursion terminates with a finite estimate.
+  // Per-node own height. Falls back to the fixed base height.
   const ownHeight = (id: string): number => {
     const node = byId.get(id);
     if (!node) return NODE_HEIGHT;
     return options?.nodeHeight ? options.nodeHeight(node) : NODE_HEIGHT;
   };
 
-  const measuring = new Set<string>();
+  // React Flow can only render each graph node once. Build the same first-visit
+  // spanning forest that placement will use, then measure that forest. This
+  // keeps shared descendants and relationship cycles from reserving duplicate
+  // vertical slots that later get skipped, which otherwise creates large random
+  // gaps in dense model relationship graphs.
+  const forestChildren = new Map<string, string[]>();
+  const claimed = new Set<string>();
+  const layoutRoots: string[] = [];
+
+  const claim = (id: string): boolean => {
+    if (!byId.has(id) || claimed.has(id)) return false;
+
+    claimed.add(id);
+    const children: string[] = [];
+    for (const child of adjacency.get(id) ?? []) {
+      if (claim(child)) children.push(child);
+    }
+    forestChildren.set(id, children);
+    return true;
+  };
+
+  for (const root of roots) {
+    if (claim(root)) layoutRoots.push(root);
+  }
+
   const measured = new Set<string>();
   const subtreeHeight = new Map<string, number>();
 
   const measure = (id: string): number => {
     if (measured.has(id)) return subtreeHeight.get(id) ?? ownHeight(id);
-    if (measuring.has(id)) return ownHeight(id);
-    measuring.add(id);
-    const children = (adjacency.get(id) ?? []).filter((child) => byId.has(child));
+    const children = forestChildren.get(id) ?? [];
     const selfHeight = ownHeight(id);
     if (children.length === 0) {
-      measuring.delete(id);
       measured.add(id);
       subtreeHeight.set(id, selfHeight);
       return selfHeight;
@@ -181,13 +207,12 @@ export function layoutHierarchyGraph(
       return sum + measure(child) + (index === 0 ? 0 : SIBLING_GAP);
     }, 0);
     const height = Math.max(selfHeight, childTotal);
-    measuring.delete(id);
     measured.add(id);
     subtreeHeight.set(id, height);
     return height;
   };
 
-  roots.forEach(measure);
+  layoutRoots.forEach(measure);
 
   const positioned = new Map<string, GraphNode & { position: { x: number; y: number } }>();
   const placed = new Set<string>();
@@ -208,7 +233,7 @@ export function layoutHierarchyGraph(
       },
     });
 
-    const children = (adjacency.get(id) ?? []).filter((child) => byId.has(child) && !placed.has(child));
+    const children = forestChildren.get(id) ?? [];
     const childTotal = children.reduce((sum, child, index) => {
       return sum + (subtreeHeight.get(child) ?? ownHeight(child)) + (index === 0 ? 0 : SIBLING_GAP);
     }, 0);
@@ -220,7 +245,7 @@ export function layoutHierarchyGraph(
   };
 
   let cursor = PAD_Y;
-  for (const root of roots) {
+  for (const root of layoutRoots) {
     const height = subtreeHeight.get(root) ?? ownHeight(root);
     place(root, cursor, 0);
     cursor += height + SIBLING_GAP;

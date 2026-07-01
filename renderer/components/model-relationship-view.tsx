@@ -30,6 +30,13 @@ import { cn } from "@/lib/utils";
 
 const nodeTypes: NodeTypes = { laraNode: ModelNodeCard };
 
+const MODEL_LAYOUT = {
+  levelWidth: 374,
+  siblingGap: 44,
+  padX: 64,
+  padY: 48,
+} as const;
+
 interface ModelRelationshipViewProps {
   graph: Graph;
   selectedId: string | null;
@@ -142,6 +149,7 @@ function ModelRelationshipCanvas({
 
   const { nodes: laidOut, edges } = useMemo(() => {
     const { nodes: positioned } = layoutHierarchyGraph(subgraph, seedIds, {
+      ...MODEL_LAYOUT,
       nodeHeight: modelNodeHeight,
     });
     const rfNodes: Node<LaraLensNodeData>[] = positioned.map(
@@ -249,7 +257,7 @@ function ModelRelationshipCanvas({
         onPaneClick={handlePaneClick}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.45, maxZoom: 1 }}
+        fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
         proOptions={{ hideAttribution: true }}
         minZoom={0.2}
         maxZoom={2.5}
