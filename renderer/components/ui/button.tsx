@@ -3,21 +3,21 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--aperture)] focus-visible:ring-offset-0 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
         default:
-          "bg-[var(--aperture)] text-[#0f0f11] hover:bg-[#c49a4a] shadow-none",
+          "bg-primary text-primary-foreground shadow-none hover:bg-primary/90",
         secondary:
-          "bg-[var(--chassis)] text-[var(--flare)] hover:bg-[#252936]",
+          "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         outline:
-          "border border-[var(--chassis)] bg-transparent text-[var(--flare)] hover:bg-[var(--accent)] hover:text-[var(--flare)]",
+          "border border-input bg-transparent text-foreground hover:bg-accent hover:text-accent-foreground",
         ghost:
-          "text-[var(--flare)] hover:bg-[var(--accent)] hover:text-[var(--flare)]",
+          "text-foreground hover:bg-accent hover:text-accent-foreground",
         destructive:
-          "bg-[var(--destructive)] text-white hover:bg-[#a34d4d]",
-        link: "text-[var(--aperture)] underline-offset-4 hover:underline",
+          "bg-destructive text-destructive-foreground shadow-none hover:bg-destructive/90",
+        link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
         default: "h-9 px-4 py-2",

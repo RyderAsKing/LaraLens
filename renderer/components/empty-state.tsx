@@ -114,7 +114,7 @@ function RecentProjects({
           <button
             key={project.path}
             onClick={() => onOpen(project.path)}
-            className="flex w-full min-w-0 items-center justify-between gap-3 rounded-lg border border-[var(--chassis)] bg-[var(--optic)] px-3 py-2 text-left transition-colors hover:border-[var(--aperture)]/30 hover:bg-[#1a1c24] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--aperture)]"
+            className="flex w-full min-w-0 items-center justify-between gap-3 rounded-lg border border-[var(--chassis)] bg-[var(--optic)] px-3 py-2 text-left transition-colors hover:border-[var(--aperture)]/30 hover:bg-[var(--accent)]/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--aperture)]"
           >
             <span className="min-w-0">
               <span className="block truncate text-sm font-medium text-[var(--flare)]">

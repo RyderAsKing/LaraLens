@@ -154,10 +154,10 @@ function FolderCard({
   return (
     <button
       onClick={() => onBrowse(node.path)}
-      className="group flex min-h-34 flex-col gap-3 rounded-xl border border-[var(--chassis)] bg-[var(--optic)] p-3 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-[#C49A5E]/30 hover:bg-[#1a1c24] hover:shadow-md"
+      className="group flex min-h-34 flex-col gap-3 rounded-xl border border-[var(--chassis)] bg-[var(--optic)] p-3 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-[var(--aperture)]/30 hover:bg-[var(--accent)]/20 hover:shadow-md"
     >
       <div className="flex items-start justify-between gap-3">
-        <Folder className="h-6 w-6 text-[#C4A97A]" />
+        <Folder className="h-6 w-6 text-[var(--aperture)]" />
         <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--etch)]">
           folder
         </span>
@@ -202,7 +202,7 @@ function FileCard({
     <button
       onClick={() => onOpen(first.id)}
       className={cn(
-        "group flex min-h-34 flex-col gap-3 rounded-xl border bg-[var(--optic)] p-3 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-[var(--aperture)]/25 hover:bg-[#1a1c24] hover:shadow-md",
+        "group flex min-h-34 flex-col gap-3 rounded-xl border bg-[var(--optic)] p-3 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-[var(--aperture)]/25 hover:bg-[var(--accent)]/20 hover:shadow-md",
         selected ? "border-[var(--aperture)]/40" : "border-[var(--chassis)]"
       )}
     >
