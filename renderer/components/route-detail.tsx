@@ -261,18 +261,21 @@ function DescendantBranch({
   selectedId,
   onSelect,
   graph,
+  underController = false,
 }: {
   node: DescendantTreeNode;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   graph: Graph;
+  underController?: boolean;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(() => !underController);
   const hasChildren = node.children.length > 0;
   const accent = ACCENT_COLORS[node.node.type] ?? "#7A7E85";
   const subtitle = nodeSubtitle(node.node);
   const edgeLabel = node.edge?.label;
   const selected = selectedId === node.node.id;
+  const childUnderController = underController || node.node.type === "controller";
 
   const openCode = async () => {
     const location = nodeLocation(node.node, graph);
@@ -351,6 +354,7 @@ function DescendantBranch({
               selectedId={selectedId}
               onSelect={onSelect}
               graph={graph}
+              underController={childUnderController}
             />
           ))}
         </div>
