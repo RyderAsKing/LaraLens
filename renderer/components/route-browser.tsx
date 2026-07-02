@@ -1,10 +1,10 @@
 "use client";
 
 import { useMemo } from "react";
-import { Folder, FileCode, ChevronRight, Home, LayoutGrid, ListTree } from "lucide-react";
+import { Folder, FileCode, ChevronRight, Route, LayoutGrid, ListTree } from "lucide-react";
 import { buildRouteUriTree } from "@/lib/route-tree";
 import type { UriTreeNode } from "@/lib/route-tree";
-import { displayHttpMethod, methodBadgeClass } from "@/lib/graph";
+import { ACCENT_COLORS, displayHttpMethod, methodBadgeClass } from "@/lib/graph";
 import type { Graph, GraphNode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { RouteTreeView } from "./route-tree-view";
@@ -113,16 +113,23 @@ export function RouteBrowser({
                   : "text-[var(--etch)] hover:text-[var(--flare)]"
               )}
             >
-              {i === 0 && <Home className="h-3.5 w-3.5" />}
-              {i === 0 ? "" : c.label}
+              {i === 0 && (
+                <Route
+                  className="h-3.5 w-3.5"
+                  style={{ color: ACCENT_COLORS.route }}
+                />
+              )}
+              {i === 0 ? "Routes" : c.label}
             </button>
           </div>
         ))}
+        {/* Route count — sits next to the breadcrumb, mirroring the Models header */}
+        <span aria-hidden className="text-[var(--etch)]">·</span>
+        <span className="text-xs tabular-nums text-[var(--etch)]">
+          {folderCount} route{folderCount === 1 ? "" : "s"}
+          {viewMode === "tree" ? " total" : " in this folder"}
+        </span>
         <div className="ml-auto flex items-center gap-3">
-          <span className="text-xs text-[var(--etch)]">
-            {folderCount} route{folderCount === 1 ? "" : "s"}
-            {viewMode === "tree" ? " total" : " in this folder"}
-          </span>
           {/* Cards / Tree segmented toggle */}
           <div className="flex rounded-md border border-[var(--chassis)] p-0.5">
             <button
