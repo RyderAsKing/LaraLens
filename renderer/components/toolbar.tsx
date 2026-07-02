@@ -3,14 +3,13 @@
 import { Boxes, FolderOpen, Loader2, RefreshCw, Route } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { ScanSummary } from "@/lib/types";
+import { OpencodeStatus } from "@/components/opencode-status";
 
 export type FeatureMode = "routes" | "models";
 
 interface ToolbarProps {
   projectPath: string | null;
   projectName: string;
-  summary: ScanSummary | null;
   status: "idle" | "scanning" | "success" | "error";
   featureMode: FeatureMode;
   onFeatureModeChange: (mode: FeatureMode) => void;
@@ -22,7 +21,6 @@ interface ToolbarProps {
 export function Toolbar({
   projectPath,
   projectName,
-  summary,
   status,
   featureMode,
   onFeatureModeChange,
@@ -109,22 +107,9 @@ export function Toolbar({
       </div>
 
 
-      {/* Stats — instrument readout style */}
-      {summary && (
-        <div className="hidden items-center gap-5 lg:flex">
-          <StatReadout label="Routes" value={summary.totalRoutes} />
-          <StatReadout label="Controllers" value={summary.totalControllers} />
-          <StatReadout label="Models" value={summary.totalModels} />
-          <StatReadout label="Commands" value={summary.totalCommands} />
-          <StatReadout label="Middleware" value={summary.totalMiddleware} />
-          <span className="font-mono text-[10px] text-[var(--etch)]">
-            {Math.round(summary.durationMs)}ms
-          </span>
-        </div>
-      )}
-
       {/* Actions */}
       <div className="flex items-center gap-2">
+        <OpencodeStatus />
         {projectPath && (
           <Button
             variant="outline"
@@ -150,18 +135,5 @@ export function Toolbar({
         </Button>
       </div>
     </header>
-  );
-}
-
-function StatReadout({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="flex flex-col items-center leading-none">
-      <span className="font-[family-name:var(--font-display)] text-sm font-semibold tabular-nums text-[var(--flare)]">
-        {value}
-      </span>
-      <span className="mt-0.5 text-[9px] font-medium uppercase tracking-wider text-[var(--etch)]">
-        {label}
-      </span>
-    </div>
   );
 }

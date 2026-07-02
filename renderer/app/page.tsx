@@ -124,7 +124,6 @@ export default function Page() {
       <Toolbar
         projectPath={projectPath}
         projectName={graph?.meta.project ?? "Laravel Project"}
-        summary={summary}
         status={status}
         featureMode={featureMode}
         onFeatureModeChange={handleFeatureModeChange}
@@ -174,13 +173,18 @@ export default function Page() {
           </main>
 
           <aside className="hidden w-80 shrink-0 border-l border-[var(--chassis)] lg:block">
-            <Inspector graph={graph!} selectedId={selectedId} />
+            <Inspector graph={graph!} selectedId={selectedId} summary={summary} />
           </aside>
         </div>
       )}
 
-      <footer className="shrink-0 border-t border-[var(--chassis)] px-5 py-1.5 text-center text-[11px] text-[var(--etch)]">
-        LaraLens
+      <footer className="flex shrink-0 items-center justify-between border-t border-[var(--chassis)] px-5 py-1.5 text-[11px] text-[var(--etch)]">
+        <span>LaraLens</span>
+        {summary && (
+          <span className="font-mono text-[10px]">
+            Scanned in {Math.round(summary.durationMs)}ms
+          </span>
+        )}
       </footer>
     </div>
   );

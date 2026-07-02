@@ -4,6 +4,7 @@ import { app, ipcMain, BrowserWindow } from "electron";
 import serve from "electron-serve";
 import { createWindow } from "./helpers/create-window";
 import { scanProject } from "./scanner/index";
+import * as opencode from "./opencode";
 
 const isProd = process.env.NODE_ENV === "production";
 let currentProjectRoot: string | null = null;
@@ -21,7 +22,13 @@ if (isProd) {
       try {
         const root = path.resolve(projectPath);
         const result = await scanProject(root);
-        if (result.ok) currentProjectRoot = root;
+        if (result.ok) {
+          currentProjectRoot = root;
+          // Fire-and-forget: don't block the scan result on opencode startup.
+          opencode.startForProject(root).catch((err) => {
+            console.error("[opencode] auto-start failed:", err);
+          });
+        }
         return result;
       } catch (error) {
         const message =
@@ -89,6 +96,36 @@ if (isProd) {
       }
     }
   );
+
+  // -------------------------------------------------------------------------
+  // OpenCode IPC + lifecycle
+  // -------------------------------------------------------------------------
+  // Broadcast status changes to all renderer windows so the toolbar chip stays
+  // in sync without each window polling.
+  opencode.subscribe((status) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send("opencode:status-changed", status);
+    }
+  });
+
+  ipcMain.handle("opencode:status", () => opencode.getStatus());
+  ipcMain.handle("opencode:start", () => {
+    if (!currentProjectRoot) return;
+    return opencode.startForProject(currentProjectRoot);
+  });
+  ipcMain.handle("opencode:stop", () => opencode.stop());
+  ipcMain.handle("opencode:restart", () => opencode.restart());
+
+  // Kick off detection as soon as possible (before any window opens).
+  opencode.detect().catch((err) => {
+    console.error("[opencode] detection failed:", err);
+  });
+
+  // Synchronously kill the server when the app is closing so it doesn't
+  // outlive LaraLens.
+  app.on("before-quit", () => {
+    opencode.dispose();
+  });
 
   await app.whenReady();
 

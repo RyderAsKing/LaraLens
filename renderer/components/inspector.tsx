@@ -6,14 +6,15 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ACCENT_COLORS, TYPE_LABELS } from "@/lib/graph";
 import { nodeLocation } from "@/lib/node-location";
-import type { Graph, GraphEdge, GraphNode } from "@/lib/types";
+import type { Graph, GraphEdge, GraphNode, ScanSummary } from "@/lib/types";
 
 interface InspectorProps {
   graph: Graph;
   selectedId: string | null;
+  summary?: ScanSummary | null;
 }
 
-export function Inspector({ graph, selectedId }: InspectorProps) {
+export function Inspector({ graph, selectedId, summary }: InspectorProps) {
   const node = useMemo<GraphNode | null>(
     () => graph.nodes.find((n) => n.id === selectedId) ?? null,
     [graph, selectedId]
@@ -36,15 +37,32 @@ export function Inspector({ graph, selectedId }: InspectorProps) {
 
   if (!node) {
     return (
-      <div className="flex h-full flex-col items-center justify-center p-6 text-center">
-        <div className="search-mark h-10 w-10">
-          <div className="lens-sweep-inner flex h-full w-full items-center justify-center">
-            <Search className="h-[18px] w-[18px] text-[var(--aperture)]" />
+      <div className="flex h-full flex-col">
+        {summary && (
+          <div className="border-b border-[var(--chassis)] p-4">
+            <p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--etch)]">
+              Project Summary
+            </p>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+              <SummaryStat label="Routes" value={summary.totalRoutes} />
+              <SummaryStat label="Controllers" value={summary.totalControllers} />
+              <SummaryStat label="Models" value={summary.totalModels} />
+              <SummaryStat label="Commands" value={summary.totalCommands} />
+              <SummaryStat label="Middleware" value={summary.totalMiddleware} />
+              <SummaryStat label="Providers" value={summary.totalProviders} />
+            </div>
           </div>
+        )}
+        <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
+          <div className="search-mark h-10 w-10">
+            <div className="lens-sweep-inner flex h-full w-full items-center justify-center">
+              <Search className="h-[18px] w-[18px] text-[var(--aperture)]" />
+            </div>
+          </div>
+          <p className="mt-3 text-sm text-[var(--etch)]">
+            Select a node to inspect its details.
+          </p>
         </div>
-        <p className="mt-3 text-sm text-[var(--etch)]">
-          Select a node to inspect its details.
-        </p>
       </div>
     );
   }
@@ -344,6 +362,19 @@ function DataRow({ label, value, mono }: { label: string; value: string; mono?: 
 
 function isHiddenInspectorEdge(edge: GraphEdge): boolean {
   return false;
+}
+
+function SummaryStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-baseline justify-between">
+      <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--etch)]">
+        {label}
+      </span>
+      <span className="font-[family-name:var(--font-display)] text-sm font-semibold tabular-nums text-[var(--flare)]">
+        {value}
+      </span>
+    </div>
+  );
 }
 
 function graphFromNodeMap(nodesById: Map<string, GraphNode>): Graph {
