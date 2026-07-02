@@ -111,6 +111,7 @@ export function nodeSubtitle(node: GraphNodeLike): string {
     case "action":
     case "service":
     case "validation_request":
+      if (d.classOnly) return (d.fqcn as string) ?? "";
       return `${d.fqcn ?? ""}::${d.method ?? ""}`.replace(/^::$/, "");
     case "view":
       return (d.fqcn as string) ?? node.label;

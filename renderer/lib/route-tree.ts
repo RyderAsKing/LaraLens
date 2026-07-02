@@ -260,14 +260,14 @@ export function buildRouteSubgraph(
 
 /**
  * Build the graph view used for real project work: a route is shown as a
- * file-by-file execution path instead of a raw scanner relationship graph.
+ * class/method execution path instead of a raw scanner relationship graph.
  *
  * Reference-only discoveries (models, enums, interfaces, traits, facades, and
  * model relationships) stay available in the Inspector/sidebar because the
  * original graph is untouched, but they do not crowd the canvas. The canvas is
- * intentionally reduced to files and callable methods so a developer can see:
- * routes file -> route definition -> middleware file -> handle() -> controller
- * file -> action() -> runtime call-outs.
+ * intentionally reduced to classes and callable methods so a developer can see:
+ * route definition -> middleware class -> handle() -> controller class ->
+ * action() -> runtime call-outs without file-name container nodes.
  */
 export function buildRouteDevelopmentSubgraph(
   graph: Graph,
@@ -303,32 +303,33 @@ export function buildRouteDevelopmentSubgraph(
     const sourceNode = sourceById.get(String(node.data.originalNodeId ?? node.id)) ?? node;
     const location = nodeLocation(sourceNode, sourceGraph) ?? nodeLocation(node, raw);
     const hasMethod = shouldRenderAsMethod(sourceNode);
+    const hasClass = isClassBackedNode(sourceNode);
 
-    if (!location?.file && !hasMethod) continue;
+    if (!hasClass && !hasMethod) continue;
 
     let entryId: string;
     let exitId: string;
 
-    if (location?.file) {
-      const fileNode = makeFileNode(location.file, sourceNode);
-      addNode(fileNode);
-      entryId = fileNode.id;
-      exitId = fileNode.id;
+    if (hasClass) {
+      const classNode = makeClassNode(sourceNode, sourceGraph, location?.file, location?.line);
+      addNode(classNode);
+      entryId = classNode.id;
+      exitId = classNode.id;
 
       if (hasMethod) {
-        const methodNode = makeMethodNode(sourceNode, location.file, location.line);
+        const methodNode = makeMethodNode(sourceNode, location?.file, location?.line);
         addNode(methodNode);
         addEdge({
-          id: `file-method::${fileNode.id}::${methodNode.id}`,
-          source: fileNode.id,
+          id: `class-method::${classNode.id}::${methodNode.id}`,
+          source: classNode.id,
           target: methodNode.id,
-          label: "contains",
-          type: "file-to-method",
+          label: "defines",
+          type: "class-to-method",
         });
         exitId = methodNode.id;
       }
     } else {
-      const methodNode = makeMethodNode(sourceNode);
+      const methodNode = makeMethodNode(sourceNode, location?.file, location?.line);
       addNode(methodNode);
       entryId = methodNode.id;
       exitId = methodNode.id;
@@ -439,7 +440,6 @@ function shouldRenderAsMethod(node: GraphNode): boolean {
   if ([
     "route",
     "middleware",
-    "controller",
     "action",
     "service",
     "validation_request",
@@ -450,18 +450,41 @@ function shouldRenderAsMethod(node: GraphNode): boolean {
   return typeof node.data.method === "string" && node.data.method.length > 0;
 }
 
-function makeFileNode(file: string, sourceNode: GraphNode): GraphNode {
+function isClassBackedNode(node: GraphNode): boolean {
+  if (node.type === "route" || node.type === "lifecycle") return false;
+  const fqcn = node.data.fqcn;
+  return typeof fqcn === "string" && fqcn.length > 0;
+}
+
+function makeClassNode(sourceNode: GraphNode, graph: Graph, file?: string, line?: number): GraphNode {
+  const fqcn = String(sourceNode.data.fqcn ?? "");
+  const existingClassNode = graph.nodes.find((node) => {
+    if (node.type === "action" || node.type === "service" || node.type === "filament_page_method") return false;
+    if (node.id === sourceNode.id) return true;
+    return node.data.fqcn === fqcn;
+  });
+  const node = existingClassNode ?? sourceNode;
+  const location = nodeLocation(node, graph);
+
   return {
-    id: `file::${file}`,
-    type: "file",
-    label: basename(file),
+    id: existingClassNode ? node.id : `${sourceNode.type}_class::${fqcn}`,
+    type: node.type,
+    label: classLabel(node),
     data: {
-      file,
-      path: file,
-      originalNodeId: sourceNode.id,
-      originalNodeType: sourceNode.type,
+      ...node.data,
+      file: location?.file ?? file ?? node.data.file,
+      line: location?.line ?? line ?? node.data.line,
+      classOnly: true,
+      originalNodeId: existingClassNode ? node.id : sourceNode.id,
+      originalNodeType: node.type,
     },
   };
+}
+
+function classLabel(node: GraphNode): string {
+  const fqcn = String(node.data.fqcn ?? "");
+  if (fqcn) return fqcn.split("\\").filter(Boolean).pop() ?? fqcn;
+  return node.label;
 }
 
 function makeMethodNode(sourceNode: GraphNode, file?: string, line?: number): GraphNode {
@@ -513,11 +536,6 @@ function middlewareDisplayName(node: GraphNode): string {
   const alias = String(node.data.alias ?? "");
   if (alias) return alias;
   return node.label || String(node.data.fqcn ?? "Middleware");
-}
-
-function basename(file: string): string {
-  const normalized = file.replace(/\\/g, "/");
-  return normalized.split("/").filter(Boolean).pop() ?? file;
 }
 
 function normalizeRequestPipelineGraph(graph: Graph): Graph {
