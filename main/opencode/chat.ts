@@ -20,8 +20,8 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { OpencodeClient, Event, Part, Message } from "@opencode-ai/sdk";
-import type { ChatMessage, ChatPart, ChatToolState } from "./types";
+import type { OpencodeClient, Event, Part, Message, Permission } from "@opencode-ai/sdk";
+import type { ChatMessage, ChatPart, ChatToolState, ChatPermissionResponse } from "./types";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -277,6 +277,30 @@ export async function abort(
   }
   chatSession.pendingAssistantLocalId = null;
   return { ok: true };
+}
+
+/** Reply to an OpenCode permission request so the session can continue. */
+export async function replyPermission(
+  projectRoot: string,
+  permissionID: string,
+  response: ChatPermissionResponse
+): Promise<{ ok: boolean; error?: string }> {
+  if (!client) return { ok: false, error: "OpenCode server is not connected." };
+  const chatSession = sessions.get(projectRoot);
+  if (!chatSession?.opencodeSessionId) {
+    return { ok: false, error: "No active session for this permission." };
+  }
+  try {
+    const result = await client.postSessionIdPermissionsPermissionId({
+      path: { id: chatSession.opencodeSessionId, permissionID },
+      query: { directory: projectRoot },
+      body: { response },
+    });
+    if (result.error) return { ok: false, error: describeSdkError(result.error) };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /** Return the conversation history for a project (may be empty). */
@@ -624,8 +648,92 @@ function handleEvent(event: Event): void {
         event.properties.error
       );
       break;
+    case "permission.updated":
+      handlePermissionUpdated(event.properties);
+      break;
+    case "permission.replied":
+      handlePermissionReplied(
+        event.properties.sessionID,
+        event.properties.permissionID,
+        event.properties.response as ChatPermissionResponse
+      );
+      break;
     // Other event types are not relevant to chat.
   }
+}
+
+function handlePermissionUpdated(permission: Permission): void {
+  const projectRoot = sessionToProject.get(permission.sessionID);
+  if (!projectRoot) return;
+  const chatSession = sessions.get(projectRoot);
+  if (!chatSession) return;
+
+  let localId = chatSession.opencodeToLocal.get(permission.messageID);
+  if (!localId && chatSession.pendingAssistantLocalId) {
+    localId = chatSession.pendingAssistantLocalId;
+    chatSession.opencodeToLocal.set(permission.messageID, localId);
+    chatSession.pendingAssistantLocalId = null;
+  } else if (!localId) {
+    const recent = [...chatSession.messages].reverse().find(
+      (m) =>
+        m.role === "assistant" &&
+        (m.status === "pending" || m.status === "streaming")
+    );
+    if (!recent) return;
+    localId = recent.id;
+    chatSession.opencodeToLocal.set(permission.messageID, localId);
+  }
+
+  const message = chatSession.messages.find((m) => m.id === localId);
+  if (!message || message.status === "complete" || message.status === "error") return;
+  const part: ChatPart = {
+    id: `permission:${permission.id}`,
+    type: "permission",
+    permissionID: permission.id,
+    permissionType: permission.type,
+    title: permission.title,
+    pattern: permission.pattern,
+    metadata: permission.metadata,
+    callID: permission.callID,
+    status: "pending",
+  };
+  if (!message.parts) message.parts = [];
+  const idx = message.parts.findIndex((p) => p.id === part.id);
+  if (idx >= 0) message.parts[idx] = part;
+  else message.parts.push(part);
+  if (message.status === "pending") message.status = "streaming";
+  emitPart(chatSession, localId, part);
+}
+
+function handlePermissionReplied(
+  sessionId: string,
+  permissionID: string,
+  response: ChatPermissionResponse
+): void {
+  const projectRoot = sessionToProject.get(sessionId);
+  if (!projectRoot) return;
+  const chatSession = sessions.get(projectRoot);
+  if (!chatSession) return;
+  for (const message of chatSession.messages) {
+    const parts = message.parts;
+    const idx = parts?.findIndex(
+      (p) => p.type === "permission" && p.permissionID === permissionID
+    ) ?? -1;
+    if (!parts || idx < 0) continue;
+    const current = parts[idx];
+    if (current.type !== "permission") continue;
+    const updated: ChatPart = {
+      ...current,
+      status: response === "reject" ? "rejected" : "approved",
+      response,
+    };
+    parts[idx] = updated;
+    emitPart(chatSession, message.id, updated);
+    return;
+  }
+  console.warn(
+    `[opencode:chat] permission.replied for unknown permission ${permissionID} in session ${sessionId}`
+  );
 }
 
 /**
@@ -892,12 +1000,20 @@ async function handleSessionIdle(sessionId: string): Promise<void> {
       (message.status === "pending" || message.status === "streaming")
     ) {
       if (canonical) {
+        const existingPermissionParts = (message.parts ?? []).filter(
+          (part): part is Extract<ChatPart, { type: "permission" }> =>
+            part.type === "permission"
+        );
         // Apply the canonical content if it's more complete than what we streamed.
         if (canonical.content && canonical.content.length > message.content.length) {
           message.content = canonical.content;
         }
-        // Replace parts with the canonical set (handles missed streaming events).
-        message.parts = canonical.parts;
+        // Replace streamed server parts with the canonical set, but keep
+        // permission prompts/replies: OpenCode emits permissions as out-of-band
+        // events, so they are not returned by session.messages(). Dropping them
+        // here can make an approved/denied permission disappear exactly when the
+        // turn completes.
+        message.parts = [...canonical.parts, ...existingPermissionParts];
       }
       message.status = "complete";
       emitDone(projectRoot, message.id, message.content, message.parts);

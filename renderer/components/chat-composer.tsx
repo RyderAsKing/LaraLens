@@ -27,7 +27,7 @@ import {
 import { useOpencode } from "@/hooks/use-opencode";
 import { useOpencodeChat } from "@/hooks/use-opencode-chat";
 import { CHAT_PRESETS } from "@/lib/chat-presets";
-import type { ChatMessage, ChatPart } from "@/lib/opencode-types";
+import type { ChatMessage, ChatPart, ChatPermissionResponse } from "@/lib/opencode-types";
 import { cn } from "@/lib/utils";
 
 // prompt-kit components
@@ -71,6 +71,7 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
     send,
     abort,
     clear,
+    replyPermission,
     dismissError,
   } = useOpencodeChat(projectRoot);
 
@@ -167,7 +168,7 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
                 <EmptyState onPreset={handlePreset} />
               ) : (
                 messages.map((msg) => (
-                  <ChatMessageRow key={msg.id} message={msg} />
+                  <ChatMessageRow key={msg.id} message={msg} onReplyPermission={replyPermission} />
                 ))
               )}
             </ChatContainerContent>
@@ -288,7 +289,13 @@ function EmptyState({ onPreset }: { onPreset: (prompt: string) => void }) {
 // Message row — user bubble vs assistant full-width parts
 // ---------------------------------------------------------------------------
 
-function ChatMessageRow({ message }: { message: ChatMessage }) {
+function ChatMessageRow({
+  message,
+  onReplyPermission,
+}: {
+  message: ChatMessage;
+  onReplyPermission: (permissionID: string, response: ChatPermissionResponse) => Promise<boolean>;
+}) {
   if (message.role === "user") {
     return (
       <div className="mb-5 flex w-full flex-col items-end">
@@ -310,7 +317,7 @@ function ChatMessageRow({ message }: { message: ChatMessage }) {
   const hasVisibleParts = !!message.parts && message.parts.length > 0;
 
   return (
-    <div className="flex w-full flex-col items-start gap-3">
+    <div className="flex w-full flex-col items-start gap-1.5">
       {showThinking ? (
         <div className="flex min-h-[20px] items-center gap-2 py-1">
           <TextShimmer className="text-sm font-medium">Thinking...</TextShimmer>
@@ -324,6 +331,7 @@ function ChatMessageRow({ message }: { message: ChatMessage }) {
                   part={part}
                   isStreaming={message.status === "streaming"}
                   isFirst={i === 0}
+                  onReplyPermission={onReplyPermission}
                 />
               ))
             : message.content && (
@@ -354,16 +362,18 @@ function AssistantPart({
   part,
   isStreaming,
   isFirst,
+  onReplyPermission,
 }: {
   part: ChatPart;
   isStreaming: boolean;
   isFirst: boolean;
+  onReplyPermission: (permissionID: string, response: ChatPermissionResponse) => Promise<boolean>;
 }) {
   switch (part.type) {
     case "text":
       if (!part.text.trim()) return null;
       return (
-        <div className={cn("w-full", !isFirst && "mt-6")}>
+        <div className={cn("w-full pl-1", !isFirst && "mt-3")}>
           <Markdown className="text-sm leading-relaxed text-[var(--flare)]">
             {part.text}
           </Markdown>
@@ -375,7 +385,11 @@ function AssistantPart({
       return <ReasoningPart part={part} isStreaming={isStreaming} />;
 
     case "tool":
+      if (part.tool === "task") return <SubagentToolPart part={part} />;
       return <ToolCallPart part={part} />;
+
+    case "permission":
+      return <PermissionPart part={part} onReply={onReplyPermission} />;
 
     case "subtask":
       return (
@@ -432,7 +446,7 @@ function ReasoningPart({
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-      <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-sm font-medium text-[var(--flare)] transition-colors hover:bg-[var(--void)]">
+      <CollapsibleTrigger className="inline-flex items-center gap-2 rounded-md px-1 py-1 text-sm font-medium text-[var(--flare)] transition-colors hover:bg-[var(--void)]">
         {isStreaming ? (
           <TextShimmer className="text-sm font-medium">Thinking...</TextShimmer>
         ) : (
@@ -440,7 +454,7 @@ function ReasoningPart({
             <span>Thought</span>
             <ChevronDown
               className={cn(
-                "ml-auto h-3.5 w-3.5 shrink-0 text-[var(--etch)] transition-transform",
+                "h-3.5 w-3.5 shrink-0 text-[var(--etch)] transition-transform",
                 !isOpen && "-rotate-90"
               )}
             />
@@ -448,8 +462,8 @@ function ReasoningPart({
         )}
       </CollapsibleTrigger>
       <CollapsibleContent className="data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down overflow-hidden">
-        <div className="mt-2 text-[13px] leading-normal text-[var(--etch)]">
-          <Markdown>{part.text}</Markdown>
+        <div className="mt-1.5 pl-1 text-[13px] leading-normal text-[var(--etch)]">
+          <Markdown className="text-[var(--etch)]">{part.text}</Markdown>
         </div>
       </CollapsibleContent>
     </Collapsible>
@@ -562,6 +576,82 @@ function shortenUrl(url: string): string {
   } catch {
     return url;
   }
+}
+
+function PermissionPart({
+  part,
+  onReply,
+}: {
+  part: Extract<ChatPart, { type: "permission" }>;
+  onReply: (permissionID: string, response: ChatPermissionResponse) => Promise<boolean>;
+}) {
+  const [submitting, setSubmitting] = useState<ChatPermissionResponse | null>(null);
+  const pending = part.status === "pending";
+  const pattern = Array.isArray(part.pattern) ? part.pattern.join(", ") : part.pattern;
+
+  const reply = async (response: ChatPermissionResponse) => {
+    if (!pending || submitting) return;
+    setSubmitting(response);
+    try {
+      await onReply(part.permissionID, response);
+    } finally {
+      setSubmitting(null);
+    }
+  };
+
+  return (
+    <div className="w-full rounded-lg border border-[var(--aperture)]/40 bg-[var(--aperture)]/10 p-3 text-sm">
+      <div className="flex items-start gap-2">
+        <HelpCircle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--aperture)]" />
+        <div className="min-w-0 flex-1">
+          <div className="font-medium text-[var(--flare)]">Permission required</div>
+          <div className="mt-1 break-words text-xs text-[var(--etch)]">
+            {part.title || part.permissionType}
+            {pattern ? <span> · {pattern}</span> : null}
+          </div>
+        </div>
+        {!pending && (
+          <span className="text-xs text-[var(--etch)]">
+            {part.status === "approved" ? "Approved" : "Rejected"}
+          </span>
+        )}
+      </div>
+      {pending && (
+        <div className="mt-3 flex flex-wrap gap-2 pl-6">
+          <button className="rounded-md bg-[var(--aperture)] px-2.5 py-1 text-xs text-white disabled:opacity-60" disabled={!!submitting} onClick={() => reply("once")}>Allow once</button>
+          <button className="rounded-md border border-[var(--chassis)] px-2.5 py-1 text-xs text-[var(--flare)] disabled:opacity-60" disabled={!!submitting} onClick={() => reply("always")}>Always allow</button>
+          <button className="rounded-md border border-[var(--destructive)]/40 px-2.5 py-1 text-xs text-[var(--destructive)] disabled:opacity-60" disabled={!!submitting} onClick={() => reply("reject")}>Deny</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SubagentToolPart({ part }: { part: Extract<ChatPart, { type: "tool" }> }) {
+  const input = part.state.input ?? {};
+  const agent = (input.subagent_type as string) || "subagent";
+  const desc = ((input.description as string) || "Subagent task").trim();
+  const prompt = (input.prompt as string) || "";
+  const isActive = part.state.status === "pending" || part.state.status === "running";
+  const [isOpen, setIsOpen] = useState(isActive);
+
+  return (
+    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+      <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-sm transition-colors hover:bg-[var(--void)]">
+        <GitBranch className="h-3.5 w-3.5 shrink-0 text-[var(--etch)]" />
+        {isActive ? <TextShimmer className="text-sm font-medium">Subagent</TextShimmer> : <span className="font-medium text-[var(--flare)]">Subagent</span>}
+        <span className="text-sm text-[var(--etch)]">[{agent}] {truncateString(desc, 70)}</span>
+        <ChevronDown className={cn("ml-auto h-3.5 w-3.5 shrink-0 text-[var(--etch)] transition-transform", !isOpen && "-rotate-90")} />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="overflow-hidden">
+        <div className="mt-1 space-y-2 rounded-md border border-[var(--chassis)] bg-[var(--void)] p-2 text-xs">
+          {prompt && <div className="whitespace-pre-wrap text-[var(--etch)]"><span className="text-[var(--flare)]">Prompt:</span> {prompt}</div>}
+          {part.state.status === "completed" && part.state.output && <pre className="max-h-[260px] overflow-y-auto whitespace-pre-wrap break-words text-[var(--flare)]">{part.state.output}</pre>}
+          {part.state.status === "error" && <pre className="whitespace-pre-wrap break-words text-[var(--destructive)]">{part.state.error}</pre>}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
 }
 
 function ToolCallPart({ part }: { part: Extract<ChatPart, { type: "tool" }> }) {

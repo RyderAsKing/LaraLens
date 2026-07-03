@@ -83,6 +83,12 @@ const opencode = {
         error?: string;
       }>,
 
+    replyPermission: (projectRoot: string, permissionID: string, response: ChatPermissionResponse) =>
+      ipcRenderer.invoke("opencode:chat:permission:reply", { projectRoot, permissionID, response }) as Promise<{
+        ok: boolean;
+        error?: string;
+      }>,
+
     /** Subscribe to part updates for a streaming assistant message. */
     onPart: (callback: (payload: ChatPartPayload) => void) => {
       const listener = (_event: IpcRendererEvent, payload: ChatPartPayload) =>
@@ -169,11 +175,25 @@ export type ChatToolState =
   | { status: "completed"; input: Record<string, unknown>; output: string; title?: string }
   | { status: "error"; input: Record<string, unknown>; error: string };
 
+export type ChatPermissionResponse = "once" | "always" | "reject";
+
 export type ChatPart =
   | { id: string; type: "text"; text: string; synthetic?: boolean; ignored?: boolean }
   | { id: string; type: "reasoning"; text: string }
   | { id: string; type: "tool"; tool: string; callID: string; state: ChatToolState }
   | { id: string; type: "subtask"; agent: string; description: string; prompt: string }
+  | {
+      id: string;
+      type: "permission";
+      permissionID: string;
+      permissionType: string;
+      title: string;
+      pattern?: string | string[];
+      metadata: Record<string, unknown>;
+      callID?: string;
+      status: "pending" | "approved" | "rejected";
+      response?: ChatPermissionResponse;
+    }
   | { id: string; type: "step-start" }
   | { id: string; type: "step-finish"; reason: string }
   | { id: string; type: "file"; mime: string; filename?: string; url: string };

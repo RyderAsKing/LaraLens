@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ChatMessage, ChatPart } from "@/lib/opencode-types";
+import type { ChatMessage, ChatPart, ChatPermissionResponse } from "@/lib/opencode-types";
 
 /**
  * React hook for the OpenCode chat subsystem.
@@ -201,7 +201,20 @@ export function useOpencodeChat(projectRoot: string | null) {
     setError(null);
   }, [projectRoot]);
 
+  const replyPermission = useCallback(
+    async (permissionID: string, response: ChatPermissionResponse): Promise<boolean> => {
+      if (!projectRoot) return false;
+      const result = await window.opencode.chat.replyPermission(projectRoot, permissionID, response);
+      if (!result.ok) {
+        setError(result.error ?? "Failed to reply to permission request.");
+        return false;
+      }
+      return true;
+    },
+    [projectRoot]
+  );
+
   const dismissError = useCallback(() => setError(null), []);
 
-  return { messages, isStreaming, error, loading, send, abort, clear, dismissError };
+  return { messages, isStreaming, error, loading, send, abort, clear, replyPermission, dismissError };
 }

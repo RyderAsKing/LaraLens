@@ -6,6 +6,7 @@ import { createWindow } from "./helpers/create-window";
 import { scanProject } from "./scanner/index";
 import * as opencode from "./opencode";
 import * as chat from "./opencode/chat";
+import type { ChatPermissionResponse } from "./opencode/types";
 
 const isProd = process.env.NODE_ENV === "production";
 let currentProjectRoot: string | null = null;
@@ -172,6 +173,24 @@ if (isProd) {
     "opencode:chat:abort",
     async (_event, projectRoot: string) => {
       return chat.abort(projectRoot);
+    }
+  );
+
+  ipcMain.handle(
+    "opencode:chat:permission:reply",
+    async (
+      _event,
+      payload: { projectRoot: string; permissionID: string; response: ChatPermissionResponse }
+    ) => {
+      const validResponses = new Set<ChatPermissionResponse>(["once", "always", "reject"]);
+      if (
+        !payload?.projectRoot ||
+        !payload.permissionID ||
+        !validResponses.has(payload.response)
+      ) {
+        return { ok: false, error: "Invalid permission reply." };
+      }
+      return chat.replyPermission(payload.projectRoot, payload.permissionID, payload.response);
     }
   );
 
