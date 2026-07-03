@@ -5,6 +5,7 @@ import serve from "electron-serve";
 import { createWindow } from "./helpers/create-window";
 import { scanProject } from "./scanner/index";
 import * as opencode from "./opencode";
+import * as chat from "./opencode/chat";
 
 const isProd = process.env.NODE_ENV === "production";
 let currentProjectRoot: string | null = null;
@@ -108,6 +109,29 @@ if (isProd) {
     }
   });
 
+  // Keep the chat manager's client reference in sync with the server lifecycle.
+  // When the server is connected, hand it the SDK client. Detach only on
+  // terminal states; transient states such as `starting` should not by
+  // themselves mark in-flight chat messages as errored.
+  opencode.subscribe((status) => {
+    if (status.state === "connected" && status.projectRoot) {
+      chat.setClient(opencode.getClient());
+    } else if (
+      status.state === "stopped" ||
+      status.state === "error" ||
+      status.state === "not_installed"
+    ) {
+      chat.setClient(null);
+    }
+  });
+
+  // Forward chat streaming events from the main process to all renderer windows.
+  chat.setBroadcaster((channel, payload) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send(channel, payload);
+    }
+  });
+
   ipcMain.handle("opencode:status", () => opencode.getStatus());
   ipcMain.handle("opencode:start", () => {
     if (!currentProjectRoot) return;
@@ -115,6 +139,41 @@ if (isProd) {
   });
   ipcMain.handle("opencode:stop", () => opencode.stop());
   ipcMain.handle("opencode:restart", () => opencode.restart());
+
+  // -------------------------------------------------------------------------
+  // OpenCode Chat IPC
+  // -------------------------------------------------------------------------
+  ipcMain.handle(
+    "opencode:chat:send",
+    async (_event, payload: { projectRoot: string; text: string }) => {
+      if (!payload?.projectRoot || typeof payload.text !== "string") {
+        return { ok: false, error: "Invalid request." };
+      }
+      return chat.send(payload.projectRoot, payload.text);
+    }
+  );
+
+  ipcMain.handle(
+    "opencode:chat:history",
+    async (_event, projectRoot: string) => {
+      return chat.history(projectRoot);
+    }
+  );
+
+  ipcMain.handle(
+    "opencode:chat:clear",
+    async (_event, projectRoot: string) => {
+      chat.clear(projectRoot);
+      return { ok: true };
+    }
+  );
+
+  ipcMain.handle(
+    "opencode:chat:abort",
+    async (_event, projectRoot: string) => {
+      return chat.abort(projectRoot);
+    }
+  );
 
   // Kick off detection as soon as possible (before any window opens).
   opencode.detect().catch((err) => {
@@ -124,6 +183,7 @@ if (isProd) {
   // Synchronously kill the server when the app is closing so it doesn't
   // outlive LaraLens.
   app.on("before-quit", () => {
+    chat.dispose();
     opencode.dispose();
   });
 

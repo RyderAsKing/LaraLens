@@ -7,6 +7,7 @@ import { RouteBrowser, type RouteViewMode } from "@/components/route-browser";
 import { RouteDetail } from "@/components/route-detail";
 import { ModelRelationshipView } from "@/components/model-relationship-view";
 import { EmptyState, type RecentProject } from "@/components/empty-state";
+import { ChatComposer } from "@/components/chat-composer";
 import { useScan } from "@/hooks/use-scan";
 
 const RECENT_PROJECTS_KEY = "laralens:recent-projects";
@@ -178,14 +179,7 @@ export default function Page() {
         </div>
       )}
 
-      <footer className="flex shrink-0 items-center justify-between border-t border-[var(--chassis)] px-5 py-1.5 text-[11px] text-[var(--etch)]">
-        <span>LaraLens</span>
-        {summary && (
-          <span className="font-mono text-[10px]">
-            Scanned in {Math.round(summary.durationMs)}ms
-          </span>
-        )}
-      </footer>
+      <ChatComposer projectRoot={projectPath} />
     </div>
   );
 }

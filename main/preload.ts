@@ -24,10 +24,15 @@ const laralens = {
     ipcRenderer.invoke("laralens:read-code-file", file) as Promise<{ ok: boolean; content?: string; error?: string }>,
 };
 
+/** Chat streaming event payloads pushed from main → renderer. */
+type ChatPartPayload = { projectRoot: string; messageId: string; part: ChatPart; delta?: string };
+type ChatDonePayload = { projectRoot: string; messageId: string; content?: string; parts?: ChatPart[] };
+type ChatErrorPayload = { projectRoot: string; messageId: string; error: string };
+
 /**
  * The OpenCode API exposed to the renderer process.
  * The opencode server lifecycle is managed in the main process; the renderer
- * only observes status and triggers start/stop/restart.
+ * only observes status, triggers start/stop/restart, and uses the chat API.
  */
 const opencode = {
   /** Get the current opencode subsystem status. */
@@ -51,6 +56,62 @@ const opencode = {
     return () => {
       ipcRenderer.off("opencode:status-changed", listener);
     };
+  },
+
+  /** Chat API — send prompts, manage history, and subscribe to streaming events. */
+  chat: {
+    /** Send a prompt. Returns a local assistant message ID for tracking. */
+    send: (projectRoot: string, text: string) =>
+      ipcRenderer.invoke("opencode:chat:send", { projectRoot, text }) as Promise<{
+        ok: boolean;
+        assistantMessageId?: string;
+        error?: string;
+      }>,
+
+    /** Get the conversation history for a project. */
+    history: (projectRoot: string) =>
+      ipcRenderer.invoke("opencode:chat:history", projectRoot) as Promise<ChatMessage[]>,
+
+    /** Clear the conversation history for a project. */
+    clear: (projectRoot: string) =>
+      ipcRenderer.invoke("opencode:chat:clear", projectRoot) as Promise<{ ok: boolean }>,
+
+    /** Abort the current streaming response. */
+    abort: (projectRoot: string) =>
+      ipcRenderer.invoke("opencode:chat:abort", projectRoot) as Promise<{
+        ok: boolean;
+        error?: string;
+      }>,
+
+    /** Subscribe to part updates for a streaming assistant message. */
+    onPart: (callback: (payload: ChatPartPayload) => void) => {
+      const listener = (_event: IpcRendererEvent, payload: ChatPartPayload) =>
+        callback(payload);
+      ipcRenderer.on("opencode:chat:part", listener);
+      return () => {
+        ipcRenderer.off("opencode:chat:part", listener);
+      };
+    },
+
+    /** Subscribe to completion events for an assistant message. */
+    onDone: (callback: (payload: ChatDonePayload) => void) => {
+      const listener = (_event: IpcRendererEvent, payload: ChatDonePayload) =>
+        callback(payload);
+      ipcRenderer.on("opencode:chat:done", listener);
+      return () => {
+        ipcRenderer.off("opencode:chat:done", listener);
+      };
+    },
+
+    /** Subscribe to error events for an assistant message. */
+    onError: (callback: (payload: ChatErrorPayload) => void) => {
+      const listener = (_event: IpcRendererEvent, payload: ChatErrorPayload) =>
+        callback(payload);
+      ipcRenderer.on("opencode:chat:error", listener);
+      return () => {
+        ipcRenderer.off("opencode:chat:error", listener);
+      };
+    },
   },
 };
 
@@ -96,6 +157,34 @@ export type OpencodeStatus = {
   pid?: number;
   baseUrl?: string;
   projectRoot?: string;
+  error?: string;
+};
+
+export type ChatRole = "user" | "assistant";
+export type ChatMessageStatus = "pending" | "streaming" | "complete" | "error";
+
+export type ChatToolState =
+  | { status: "pending"; input: Record<string, unknown> }
+  | { status: "running"; input: Record<string, unknown>; title?: string }
+  | { status: "completed"; input: Record<string, unknown>; output: string; title?: string }
+  | { status: "error"; input: Record<string, unknown>; error: string };
+
+export type ChatPart =
+  | { id: string; type: "text"; text: string; synthetic?: boolean; ignored?: boolean }
+  | { id: string; type: "reasoning"; text: string }
+  | { id: string; type: "tool"; tool: string; callID: string; state: ChatToolState }
+  | { id: string; type: "subtask"; agent: string; description: string; prompt: string }
+  | { id: string; type: "step-start" }
+  | { id: string; type: "step-finish"; reason: string }
+  | { id: string; type: "file"; mime: string; filename?: string; url: string };
+
+export type ChatMessage = {
+  id: string;
+  role: ChatRole;
+  content: string;
+  parts?: ChatPart[];
+  createdAt: number;
+  status: ChatMessageStatus;
   error?: string;
 };
 

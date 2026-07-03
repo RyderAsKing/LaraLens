@@ -50,6 +50,65 @@ export interface OpencodeStatus {
   error?: string;
 }
 
+export type ChatRole = "user" | "assistant";
+export type ChatMessageStatus = "pending" | "streaming" | "complete" | "error";
+
+export type ChatToolState =
+  | { status: "pending"; input: Record<string, unknown> }
+  | { status: "running"; input: Record<string, unknown>; title?: string }
+  | { status: "completed"; input: Record<string, unknown>; output: string; title?: string }
+  | { status: "error"; input: Record<string, unknown>; error: string };
+
+export type ChatPart =
+  | { id: string; type: "text"; text: string; synthetic?: boolean; ignored?: boolean }
+  | { id: string; type: "reasoning"; text: string }
+  | { id: string; type: "tool"; tool: string; callID: string; state: ChatToolState }
+  | { id: string; type: "subtask"; agent: string; description: string; prompt: string }
+  | { id: string; type: "step-start" }
+  | { id: string; type: "step-finish"; reason: string }
+  | { id: string; type: "file"; mime: string; filename?: string; url: string };
+
+export interface ChatMessage {
+  id: string;
+  role: ChatRole;
+  content: string;
+  parts?: ChatPart[];
+  createdAt: number;
+  status: ChatMessageStatus;
+  error?: string;
+}
+
+export interface ChatSendResult {
+  ok: boolean;
+  assistantMessageId?: string;
+  error?: string;
+}
+
+export interface ChatAbortResult {
+  ok: boolean;
+  error?: string;
+}
+
+export interface ChatPartPayload {
+  projectRoot: string;
+  messageId: string;
+  part: ChatPart;
+  delta?: string;
+}
+
+export interface ChatDonePayload {
+  projectRoot: string;
+  messageId: string;
+  content?: string;
+  parts?: ChatPart[];
+}
+
+export interface ChatErrorPayload {
+  projectRoot: string;
+  messageId: string;
+  error: string;
+}
+
 declare global {
   interface Window {
     laralens: {
@@ -64,6 +123,15 @@ declare global {
       stop: () => Promise<void>;
       restart: () => Promise<void>;
       onStatusChange: (callback: (status: OpencodeStatus) => void) => () => void;
+      chat: {
+        send: (projectRoot: string, text: string) => Promise<ChatSendResult>;
+        history: (projectRoot: string) => Promise<ChatMessage[]>;
+        clear: (projectRoot: string) => Promise<{ ok: boolean }>;
+        abort: (projectRoot: string) => Promise<ChatAbortResult>;
+        onPart: (callback: (payload: ChatPartPayload) => void) => () => void;
+        onDone: (callback: (payload: ChatDonePayload) => void) => () => void;
+        onError: (callback: (payload: ChatErrorPayload) => void) => () => void;
+      };
     };
   }
 }

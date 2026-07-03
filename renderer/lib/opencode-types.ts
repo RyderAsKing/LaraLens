@@ -21,3 +21,35 @@ export interface OpencodeStatus {
   projectRoot?: string;
   error?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Chat — mirrors `main/opencode/types.ts`.
+// ---------------------------------------------------------------------------
+
+export type ChatRole = "user" | "assistant";
+export type ChatMessageStatus = "pending" | "streaming" | "complete" | "error";
+
+export type ChatToolState =
+  | { status: "pending"; input: Record<string, unknown> }
+  | { status: "running"; input: Record<string, unknown>; title?: string }
+  | { status: "completed"; input: Record<string, unknown>; output: string; title?: string }
+  | { status: "error"; input: Record<string, unknown>; error: string };
+
+export type ChatPart =
+  | { id: string; type: "text"; text: string; synthetic?: boolean; ignored?: boolean }
+  | { id: string; type: "reasoning"; text: string }
+  | { id: string; type: "tool"; tool: string; callID: string; state: ChatToolState }
+  | { id: string; type: "subtask"; agent: string; description: string; prompt: string }
+  | { id: string; type: "step-start" }
+  | { id: string; type: "step-finish"; reason: string }
+  | { id: string; type: "file"; mime: string; filename?: string; url: string };
+
+export interface ChatMessage {
+  id: string;
+  role: ChatRole;
+  content: string;
+  parts?: ChatPart[];
+  createdAt: number;
+  status: ChatMessageStatus;
+  error?: string;
+}
