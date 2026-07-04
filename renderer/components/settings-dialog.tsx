@@ -1,9 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bot, Cpu, Loader2, RefreshCw, Save, Settings, X } from "lucide-react";
+import { Bot, Cpu, Loader2, RefreshCw, Save, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import type {
   LaraLensSettings,
   ModelSelection,
@@ -124,15 +123,12 @@ export function SettingsDialog({ open, projectRoot, onClose }: SettingsDialogPro
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-      <div className="flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-[var(--chassis)] bg-[var(--void)] shadow-2xl">
+      <div className="flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-[var(--chassis)] bg-[var(--void)] shadow-2xl">
         <header className="flex items-start justify-between gap-4 border-b border-[var(--chassis)] px-5 py-4">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <Settings className="h-4 w-4 text-[var(--aperture)]" />
-              <h2 id="settings-title" className="text-base font-semibold text-[var(--flare)]">
-                LaraLens Settings
-              </h2>
-            </div>
+            <h2 id="settings-title" className="text-base font-semibold text-[var(--flare)]">
+              LaraLens Settings
+            </h2>
             <p className="mt-1 text-sm text-[var(--etch)]">
               Choose the default OpenCode agent and model LaraLens should use for project chat.
             </p>
@@ -236,65 +232,6 @@ export function SettingsDialog({ open, projectRoot, onClose }: SettingsDialogPro
               )}
             </section>
           </div>
-
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <CatalogPanel title="Providers and models" empty="No providers loaded yet.">
-              {providers.map((provider) => (
-                <div key={provider.id} className="rounded-md border border-[var(--chassis)]/80 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-[var(--flare)]">{provider.name}</div>
-                      <div className="truncate font-mono text-[11px] text-[var(--etch)]">{provider.id}</div>
-                    </div>
-                    <span className="rounded border border-[var(--chassis)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--etch)]">
-                      {provider.source}
-                    </span>
-                  </div>
-                  <div className="mt-2 space-y-1.5">
-                    {provider.models.map((model) => (
-                      <div key={model.id} className="rounded bg-[var(--void)]/70 px-2 py-1.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="truncate text-xs font-medium text-[var(--flare)]">{model.name}</span>
-                          <span className="shrink-0 text-[10px] text-[var(--etch)]">{model.status}</span>
-                        </div>
-                        <div className="mt-0.5 truncate font-mono text-[10px] text-[var(--etch)]">
-                          {model.id} · ctx {formatCompact(model.contextLimit)} · out {formatCompact(model.outputLimit)}
-                          {model.supportsTools ? " · tools" : ""}{model.supportsReasoning ? " · reasoning" : ""}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </CatalogPanel>
-
-            <CatalogPanel title="Agents" empty="No agents loaded yet.">
-              {selectableAgents.map((agent) => (
-                <div key={agent.name} className="rounded-md border border-[var(--chassis)]/80 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span
-                        className="h-2.5 w-2.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: agent.color || "var(--aperture)" }}
-                      />
-                      <span className="truncate text-sm font-medium text-[var(--flare)]">{agent.name}</span>
-                    </div>
-                    <span className={cn("rounded border border-[var(--chassis)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--etch)]", agent.builtIn && "text-[var(--aperture)]")}>
-                      {agent.mode}
-                    </span>
-                  </div>
-                  {agent.description && (
-                    <p className="mt-2 line-clamp-3 text-xs leading-relaxed text-[var(--etch)]">{agent.description}</p>
-                  )}
-                  {agent.model && (
-                    <div className="mt-2 truncate font-mono text-[10px] text-[var(--etch)]">
-                      model {agent.model.providerID}/{agent.model.modelID}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </CatalogPanel>
-          </div>
         </div>
 
         <footer className="flex items-center justify-between gap-3 border-t border-[var(--chassis)] px-5 py-3">
@@ -314,26 +251,6 @@ export function SettingsDialog({ open, projectRoot, onClose }: SettingsDialogPro
         </footer>
       </div>
     </div>
-  );
-}
-
-function CatalogPanel({
-  title,
-  empty,
-  children,
-}: {
-  title: string;
-  empty: string;
-  children: React.ReactNode;
-}) {
-  const hasChildren = Array.isArray(children) ? children.length > 0 : Boolean(children);
-  return (
-    <section className="rounded-lg border border-[var(--chassis)] bg-[var(--optic)] p-4">
-      <h3 className="text-sm font-semibold text-[var(--flare)]">{title}</h3>
-      <div className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
-        {hasChildren ? children : <p className="text-sm text-[var(--etch)]">{empty}</p>}
-      </div>
-    </section>
   );
 }
 
@@ -360,11 +277,4 @@ function parseModelKey(value: string): ModelSelection | null {
 
 function modelLabel(model: ModelSelection): string {
   return `${model.providerID} / ${model.modelID}`;
-}
-
-function formatCompact(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "?";
-  if (value >= 1_000_000) return `${Math.round(value / 100_000) / 10}M`;
-  if (value >= 1_000) return `${Math.round(value / 100) / 10}K`;
-  return String(value);
 }
