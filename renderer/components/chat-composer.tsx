@@ -90,6 +90,7 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
 
   const connected = status?.state === "connected";
   const enabled = connected && !!projectRoot;
+  const hasStartedConversation = messages.length > 0 || isStreaming || submitting;
 
   // Load saved settings (default agent + model) for the header tooltip.
   useEffect(() => {
@@ -152,14 +153,16 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
   return (
     <div
       className={cn(
-        "fixed z-50 left-1/2 -translate-x-1/2 transition-all duration-200",
+        "fixed z-50 left-1/2 -translate-x-1/2 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
         open
-          ? "bottom-4 h-[calc(100vh-2rem)] w-[min(1100px,calc(100vw-2rem))]"
+          ? hasStartedConversation
+            ? "bottom-4 h-[calc(100dvh-2rem)] w-[min(1100px,calc(100vw-2rem))]"
+            : "bottom-4 h-[min(520px,calc(100dvh-2rem))] w-[min(820px,calc(100vw-2rem))]"
           : "bottom-4 h-11 w-auto"
       )}
     >
       {open ? (
-        <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-[var(--chassis)] bg-[var(--optic)] shadow-2xl">
+        <div className="relative flex h-full flex-col overflow-hidden rounded-2xl border border-[var(--chassis)] bg-[var(--optic)] shadow-2xl">
           {/* Minimal header — context + info (left), actions (right) */}
           <div className="flex shrink-0 items-center justify-between px-4 py-2.5">
             <div className="flex items-center gap-2">
@@ -205,7 +208,12 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
 
           {/* Messages — ChatContainer with intelligent auto-scroll */}
           <ChatContainerRoot className="min-h-0 flex-1">
-            <ChatContainerContent className="gap-3 p-4">
+            <ChatContainerContent
+              className={cn(
+                "p-4 transition-[padding] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                hasStartedConversation ? "pb-80" : "pb-36"
+              )}
+            >
               {loading && messages.length === 0 ? (
                 <div className="flex min-h-full flex-1 items-center justify-center py-8 text-[var(--etch)]">
                   <TextShimmer>Loading...</TextShimmer>
@@ -224,40 +232,39 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
             </ChatContainerContent>
           </ChatContainerRoot>
 
-          {/* Error banner */}
-          {error && (
-            <div className="flex shrink-0 items-center gap-2 border-t border-[var(--destructive)]/30 bg-[var(--destructive)]/10 px-4 py-2 text-xs text-[var(--destructive)]">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-              <span className="flex-1 truncate">{error}</span>
-              <button
-                onClick={dismissError}
-                className="shrink-0 rounded p-0.5 hover:bg-[var(--destructive)]/20"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          )}
-
-          {/* Input area */}
-          <div className="shrink-0 border-t border-[var(--chassis)] p-3">
+          {/* Floating input area */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 px-4 pb-4 pt-16 bg-gradient-to-t from-[var(--optic)] via-[var(--optic)]/95 to-transparent">
+            {error && (
+              <div className="pointer-events-auto mx-auto mb-3 flex max-w-3xl items-center gap-2 rounded-xl border border-[var(--destructive)]/25 bg-[var(--destructive)]/10 px-3 py-2 text-xs text-[var(--destructive)] shadow-lg backdrop-blur">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                <span className="flex-1 truncate">{error}</span>
+                <button
+                  onClick={dismissError}
+                  className="shrink-0 rounded p-0.5 hover:bg-[var(--destructive)]/20"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )}
             <PromptInput
               value={input}
               onValueChange={setInput}
               onSubmit={handleSend}
               isLoading={isStreaming}
+              maxHeight={160}
               disabled={!enabled}
-              className="rounded-xl border-[var(--chassis)] bg-[var(--void)]"
+              className="pointer-events-auto mx-auto flex min-h-14 max-w-3xl items-end gap-3 rounded-[1.75rem] border-[var(--chassis)] bg-[var(--void)]/95 py-2 pl-5 pr-2 shadow-xl shadow-black/20 backdrop-blur supports-[backdrop-filter]:bg-[var(--void)]/80"
             >
               <PromptInputTextarea
                 placeholder="Ask anything..."
-                className="text-[var(--flare)] placeholder:text-[var(--etch)]"
+                className="min-h-10 flex-1 overflow-y-auto px-0 py-2 leading-6 text-[var(--flare)] placeholder:text-[var(--etch)]"
               />
-              <PromptInputActions>
+              <PromptInputActions className="ml-auto shrink-0">
                 {isStreaming ? (
                   <PromptInputAction tooltip="Stop">
                     <button
                       onClick={abort}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--destructive)] text-white transition-colors hover:brightness-110"
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--destructive)] text-white transition-colors hover:brightness-110"
                     >
                       <Square className="h-3.5 w-3.5 fill-current" />
                     </button>
@@ -267,7 +274,7 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
                     <button
                       onClick={handleSend}
                       disabled={!input.trim() || !enabled || submitting}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--aperture)] text-white transition-colors hover:brightness-110 disabled:opacity-30"
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--aperture)] text-white transition-colors hover:brightness-110 disabled:opacity-30"
                     >
                       <ArrowUp className="h-4 w-4" />
                     </button>

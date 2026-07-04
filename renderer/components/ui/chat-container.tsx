@@ -11,6 +11,7 @@ export type ChatContainerRootProps = {
 export type ChatContainerContentProps = {
   children: React.ReactNode
   className?: string
+  scrollClassName?: string
 } & React.HTMLAttributes<HTMLDivElement>
 
 export type ChatContainerScrollAnchorProps = {
@@ -39,11 +40,13 @@ function ChatContainerRoot({
 function ChatContainerContent({
   children,
   className,
+  scrollClassName,
   ...props
 }: ChatContainerContentProps) {
   return (
     <StickToBottom.Content
-      className={cn("flex w-full flex-col", className)}
+      scrollClassName={cn("flex flex-col", scrollClassName)}
+      className={cn("flex w-full flex-1 flex-col", className)}
       {...props}
     >
       {children}
