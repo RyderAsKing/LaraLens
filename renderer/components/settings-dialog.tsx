@@ -150,29 +150,22 @@ export function SettingsDialog({ open, projectRoot, onClose }: SettingsDialogPro
             </div>
           )}
 
-          <div className="grid gap-4 lg:grid-cols-2">
-            <section className="rounded-lg border border-[var(--chassis)] bg-[var(--optic)] p-4">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2 text-sm font-semibold text-[var(--flare)]">
-                    <Cpu className="h-4 w-4 text-[var(--aperture)]" />
-                    Default model
-                  </div>
-                  <p className="mt-1 text-xs text-[var(--etch)]">
-                    {providers.length} providers · {modelCount} models
-                  </p>
-                </div>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-[var(--flare)]">
+                <Cpu className="h-4 w-4 text-[var(--aperture)]" />
+                Default model
               </div>
+              <p className="mb-2 text-xs text-[var(--etch)]">
+                {providers.length} providers · {modelCount} models
+              </p>
 
-              <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--etch)]" htmlFor="default-model">
-                Model
-              </label>
               <select
                 id="default-model"
                 value={selectedModel}
                 onChange={(event) => setSelectedModel(event.target.value)}
                 disabled={loading}
-                className="mt-2 w-full rounded-md border border-[var(--chassis)] bg-[var(--void)] px-3 py-2 text-sm text-[var(--flare)] outline-none transition-colors focus:border-[var(--aperture)] focus:ring-2 focus:ring-[var(--aperture)]/30 disabled:opacity-60"
+                className="w-full rounded-md border border-[var(--chassis)] bg-[var(--void)] px-3 py-2 text-sm text-[var(--flare)] outline-none transition-colors focus:border-[var(--aperture)] focus:ring-2 focus:ring-[var(--aperture)]/30 disabled:opacity-60"
               >
                 <option value="">Auto / OpenCode default</option>
                 {selectedModel && !knownModelSelected && settings.defaultModel && (
@@ -182,36 +175,29 @@ export function SettingsDialog({ open, projectRoot, onClose }: SettingsDialogPro
                   <optgroup key={provider.id} label={`${provider.name} (${provider.source})`}>
                     {provider.models.map((model) => (
                       <option key={`${provider.id}:${model.id}`} value={modelKey(model)}>
-                        {model.name} — {model.id}
+                        {model.name}
                       </option>
                     ))}
                   </optgroup>
                 ))}
               </select>
-            </section>
+            </div>
 
-            <section className="rounded-lg border border-[var(--chassis)] bg-[var(--optic)] p-4">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2 text-sm font-semibold text-[var(--flare)]">
-                    <Bot className="h-4 w-4 text-[var(--aperture)]" />
-                    Default agent
-                  </div>
-                  <p className="mt-1 text-xs text-[var(--etch)]">
-                    {selectableAgents.length} agents available
-                  </p>
-                </div>
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-[var(--flare)]">
+                <Bot className="h-4 w-4 text-[var(--aperture)]" />
+                Default agent
               </div>
+              <p className="mb-2 text-xs text-[var(--etch)]">
+                {selectableAgents.length} agents available
+              </p>
 
-              <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--etch)]" htmlFor="default-agent">
-                Agent
-              </label>
               <select
                 id="default-agent"
                 value={selectedAgent}
                 onChange={(event) => setSelectedAgent(event.target.value)}
                 disabled={loading}
-                className="mt-2 w-full rounded-md border border-[var(--chassis)] bg-[var(--void)] px-3 py-2 text-sm text-[var(--flare)] outline-none transition-colors focus:border-[var(--aperture)] focus:ring-2 focus:ring-[var(--aperture)]/30 disabled:opacity-60"
+                className="w-full rounded-md border border-[var(--chassis)] bg-[var(--void)] px-3 py-2 text-sm text-[var(--flare)] outline-none transition-colors focus:border-[var(--aperture)] focus:ring-2 focus:ring-[var(--aperture)]/30 disabled:opacity-60"
               >
                 <option value="">OpenCode default</option>
                 {selectedAgent && !knownAgentSelected && (
@@ -230,7 +216,7 @@ export function SettingsDialog({ open, projectRoot, onClose }: SettingsDialogPro
                   Subagent-only agents cannot be used as the top-level chat agent. Saving will reset this to OpenCode default.
                 </p>
               )}
-            </section>
+            </div>
           </div>
         </div>
 
