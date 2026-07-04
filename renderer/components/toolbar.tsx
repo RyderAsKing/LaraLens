@@ -1,6 +1,6 @@
 "use client";
 
-import { Boxes, FolderOpen, Loader2, RefreshCw, Route } from "lucide-react";
+import { Boxes, FolderOpen, Loader2, RefreshCw, Route, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { OpencodeStatus } from "@/components/opencode-status";
@@ -14,6 +14,7 @@ interface ToolbarProps {
   featureMode: FeatureMode;
   onFeatureModeChange: (mode: FeatureMode) => void;
   onHome: () => void;
+  onOpenSettings: () => void;
   onPickAndScan: () => void;
   onRescan: () => void;
 }
@@ -25,6 +26,7 @@ export function Toolbar({
   featureMode,
   onFeatureModeChange,
   onHome,
+  onOpenSettings,
   onPickAndScan,
   onRescan,
 }: ToolbarProps) {
@@ -109,6 +111,15 @@ export function Toolbar({
 
       {/* Actions */}
       <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onOpenSettings}
+          aria-label="Open LaraLens settings"
+        >
+          <Settings />
+          Settings
+        </Button>
         <OpencodeStatus />
         {projectPath && (
           <Button

@@ -2,10 +2,12 @@
 import fs from "node:fs/promises";
 import { app, ipcMain, BrowserWindow } from "electron";
 import serve from "electron-serve";
+import type { Agent as OpencodeAgent, Provider as OpencodeProvider } from "@opencode-ai/sdk";
 import { createWindow } from "./helpers/create-window";
 import { scanProject } from "./scanner/index";
 import * as opencode from "./opencode";
 import * as chat from "./opencode/chat";
+import * as settings from "./settings";
 import type { ChatPermissionResponse } from "./opencode/types";
 
 const isProd = process.env.NODE_ENV === "production";
@@ -73,6 +75,91 @@ if (isProd) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
+
+  // -------------------------------------------------------------------------
+  // Global LaraLens settings
+  // -------------------------------------------------------------------------
+  ipcMain.handle("laralens:settings:get", () => settings.getSettings());
+
+  ipcMain.handle(
+    "laralens:settings:update",
+    (_event, patch: Partial<settings.LaraLensSettings>) => settings.updateSettings(patch)
+  );
+
+  ipcMain.handle(
+    "laralens:settings:options",
+    async (_event, payload?: { projectRoot?: string | null }): Promise<SettingsOptionsResult> => {
+      const root = payload?.projectRoot || currentProjectRoot;
+      const cached = settings.getCachedCatalog();
+
+      // No project scanned yet — return saved settings + cached catalog so the
+      // user still sees their last selections instead of empty dropdowns.
+      if (!root) {
+        const selectable = new Set(cached.agents.map((a) => a.name));
+        return {
+          ok: false,
+          settings: settings.reconcileSavedAgentAgainstCatalog(selectable),
+          providers: cached.providers,
+          agents: cached.agents,
+          error: "Scan a Laravel project to refresh providers, models, and agents.",
+        };
+      }
+
+      const ocClient = opencode.getClient();
+      if (!ocClient) {
+        const selectable = new Set(cached.agents.map((a) => a.name));
+        return {
+          ok: false,
+          settings: settings.reconcileSavedAgentAgainstCatalog(selectable),
+          providers: cached.providers,
+          agents: cached.agents,
+          error: "OpenCode is not connected. Showing last cached providers and agents.",
+        };
+      }
+
+      try {
+        const [providersResult, agentsResult] = await Promise.all([
+          ocClient.config.providers({ query: { directory: root } }),
+          ocClient.app.agents({ query: { directory: root } }),
+        ]);
+
+        const errors = [providersResult.error, agentsResult.error]
+          .filter(Boolean)
+          .map((error) => describeSettingsSdkError(error as { name: string; data?: unknown }));
+
+        // Filter out subagent-only agents everywhere: they cannot be used as
+        // the top-level chat agent, so we never show them in the catalog or
+        // the select. This also means a previously-saved subagent name (e.g.
+        // "build") will be reset by reconcileSavedAgentAgainstCatalog below.
+        const serializedProviders = (providersResult.data?.providers ?? []).map(serializeProvider);
+        const serializedAgents = (agentsResult.data ?? [])
+          .map(serializeAgent)
+          .filter((agent) => agent.mode !== "subagent");
+
+        if (errors.length === 0) {
+          settings.cacheCatalog(serializedProviders, serializedAgents);
+        }
+
+        const selectableNames = new Set(serializedAgents.map((a) => a.name));
+        return {
+          ok: errors.length === 0,
+          settings: settings.reconcileSavedAgentAgainstCatalog(selectableNames),
+          providers: serializedProviders,
+          agents: serializedAgents,
+          error: errors.length > 0 ? errors.join("; ") : undefined,
+        };
+      } catch (error) {
+        const selectable = new Set(cached.agents.map((a) => a.name));
+        return {
+          ok: false,
+          settings: settings.reconcileSavedAgentAgainstCatalog(selectable),
+          providers: cached.providers,
+          agents: cached.agents,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+  );
 
   const port = process.argv[2] ?? "8888";
 
@@ -252,3 +339,61 @@ export type ScanSummary = {
   totalProviders: number;
   durationMs: number;
 };
+
+// Re-export the settings catalog types so preload/renderer type files can import
+// them from a single source of truth (`main/settings.ts`).
+export type {
+  SettingsModel,
+  SettingsProvider,
+  SettingsAgent,
+} from "./settings";
+export type SettingsOptionsResult = {
+  ok: boolean;
+  settings: settings.LaraLensSettings;
+  providers: settings.SettingsProvider[];
+  agents: settings.SettingsAgent[];
+  error?: string;
+};
+
+function serializeProvider(provider: OpencodeProvider): settings.SettingsProvider {
+  return {
+    id: provider.id,
+    name: provider.name,
+    source: provider.source,
+    models: Object.values(provider.models)
+      .map((model) => ({
+        id: model.id,
+        providerID: model.providerID,
+        name: model.name,
+        status: model.status,
+        contextLimit: model.limit.context,
+        outputLimit: model.limit.output,
+        supportsTools: model.capabilities.toolcall,
+        supportsReasoning: model.capabilities.reasoning,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  };
+}
+
+function serializeAgent(agent: OpencodeAgent): settings.SettingsAgent {
+  return {
+    name: agent.name,
+    description: agent.description,
+    mode: agent.mode,
+    builtIn: agent.builtIn,
+    color: agent.color,
+    model: agent.model,
+  };
+}
+
+function describeSettingsSdkError(error: { name: string; data?: unknown }): string {
+  if (
+    error.data &&
+    typeof error.data === "object" &&
+    "message" in error.data &&
+    typeof (error.data as { message: unknown }).message === "string"
+  ) {
+    return `${error.name}: ${(error.data as { message: string }).message}`;
+  }
+  return error.name;
+}
