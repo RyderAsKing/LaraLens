@@ -207,11 +207,11 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
           <ChatContainerRoot className="min-h-0 flex-1">
             <ChatContainerContent className="gap-3 p-4">
               {loading && messages.length === 0 ? (
-                <div className="flex h-full items-center justify-center py-8 text-[var(--etch)]">
+                <div className="flex min-h-full flex-1 items-center justify-center py-8 text-[var(--etch)]">
                   <TextShimmer>Loading...</TextShimmer>
                 </div>
               ) : messages.length === 0 ? (
-                <div className="flex h-full items-center justify-center">
+                <div className="flex min-h-full flex-1 items-center justify-center">
                   <EmptyState onPreset={handlePreset} />
                 </div>
               ) : (
