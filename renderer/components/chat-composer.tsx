@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
   MessageCircle,
@@ -23,6 +23,7 @@ import {
   Loader2,
   ChevronDown,
   FileText,
+  Brain,
 } from "lucide-react";
 import { useOpencode } from "@/hooks/use-opencode";
 import { useOpencodeChat } from "@/hooks/use-opencode-chat";
@@ -35,7 +36,6 @@ import {
   ChatContainerRoot,
   ChatContainerContent,
 } from "@/components/ui/chat-container";
-import { ScrollButton } from "@/components/ui/scroll-button";
 import {
   PromptInput,
   PromptInputTextarea,
@@ -52,6 +52,12 @@ import {
 
 interface ChatComposerProps {
   projectRoot: string | null;
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
 }
 
 /**
@@ -81,8 +87,17 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
 
   const connected = status?.state === "connected";
   const enabled = connected && !!projectRoot;
-  const projectName =
-    projectRoot?.split(/[\\/]/).filter(Boolean).at(-1) ?? null;
+
+  // Context size from the most recent assistant message that has token usage.
+  const contextSize = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role === "assistant" && m.tokens) {
+        return m.tokens.input + (m.tokens.cache?.read ?? 0);
+      }
+    }
+    return null;
+  }, [messages]);
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || isStreaming || submitting || !enabled) return;
@@ -133,11 +148,8 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
     >
       {open ? (
         <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-[var(--chassis)] bg-[var(--optic)] shadow-2xl">
-          {/* Minimal header — project name + actions */}
-          <div className="flex shrink-0 items-center justify-between border-b border-[var(--chassis)] px-4 py-2.5">
-            <span className="truncate text-sm font-medium text-[var(--flare)]">
-              {projectName ?? "Chat"}
-            </span>
+          {/* Minimal header — actions + context size */}
+          <div className="flex shrink-0 items-center justify-between px-4 py-2.5">
             <div className="flex items-center gap-1">
               <button
                 onClick={clear}
@@ -155,6 +167,9 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
                 <X className="h-3.5 w-3.5" />
               </button>
             </div>
+            <span className="text-[11px] tabular-nums text-[var(--etch)]">
+              {contextSize !== null ? `${formatTokens(contextSize)} context` : ""}
+            </span>
           </div>
 
           {/* Messages — ChatContainer with intelligent auto-scroll */}
@@ -172,9 +187,6 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
                 ))
               )}
             </ChatContainerContent>
-            <div className="flex justify-center pb-2">
-              <ScrollButton />
-            </div>
           </ChatContainerRoot>
 
           {/* Error banner */}
@@ -188,21 +200,6 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
               >
                 <X className="h-3 w-3" />
               </button>
-            </div>
-          )}
-
-          {/* Presets row — only when no messages and not streaming */}
-          {messages.length === 0 && !isStreaming && (
-            <div className="flex shrink-0 flex-wrap gap-1.5 border-t border-[var(--chassis)] px-3 py-2">
-              {CHAT_PRESETS.map((preset) => (
-                <button
-                  key={preset.label}
-                  onClick={() => handlePreset(preset.prompt)}
-                  className="rounded-md border border-[var(--chassis)] bg-[var(--void)] px-2.5 py-1 text-[11px] text-[var(--etch)] transition-colors hover:border-[var(--aperture)]/50 hover:text-[var(--flare)]"
-                >
-                  {preset.label}
-                </button>
-              ))}
             </div>
           )}
 
@@ -266,12 +263,12 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
 
 function EmptyState({ onPreset }: { onPreset: (prompt: string) => void }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-4 py-12 text-center">
-      <p className="text-sm text-[var(--etch)]">
+    <div className="flex flex-col items-center justify-center gap-6 py-16 text-center">
+      <h2 className="text-2xl font-semibold tracking-tight text-[var(--flare)]">
         Ask anything about this project.
-      </p>
-      <div className="flex flex-wrap justify-center gap-2 max-w-md">
-        {CHAT_PRESETS.slice(0, 3).map((preset) => (
+      </h2>
+      <div className="flex flex-wrap justify-center gap-2 max-w-lg">
+        {CHAT_PRESETS.map((preset) => (
           <button
             key={preset.label}
             onClick={() => onPreset(preset.prompt)}
@@ -309,12 +306,13 @@ function ChatMessageRow({
   }
 
   // Assistant message
+  const visibleParts = (message.parts ?? []).filter(isRenderableChatPart);
   const showThinking =
     (message.status === "pending" || message.status === "streaming") &&
     !message.content &&
-    (!message.parts || message.parts.length === 0);
+    visibleParts.length === 0;
 
-  const hasVisibleParts = !!message.parts && message.parts.length > 0;
+  const hasVisibleParts = visibleParts.length > 0;
 
   return (
     <div className="flex w-full flex-col items-start gap-1.5">
@@ -325,12 +323,13 @@ function ChatMessageRow({
       ) : (
         <>
           {hasVisibleParts
-            ? message.parts!.map((part, i) => (
+            ? visibleParts.map((part, i) => (
                 <AssistantPart
                   key={part.id}
                   part={part}
                   isStreaming={message.status === "streaming"}
                   isFirst={i === 0}
+                  isLast={i === visibleParts.length - 1}
                   onReplyPermission={onReplyPermission}
                 />
               ))
@@ -354,6 +353,19 @@ function ChatMessageRow({
   );
 }
 
+function isRenderableChatPart(part: ChatPart): boolean {
+  switch (part.type) {
+    case "text":
+    case "reasoning":
+      return part.text.trim().length > 0;
+    case "step-start":
+    case "step-finish":
+      return false;
+    default:
+      return true;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Assistant part rendering
 // ---------------------------------------------------------------------------
@@ -362,11 +374,13 @@ function AssistantPart({
   part,
   isStreaming,
   isFirst,
+  isLast,
   onReplyPermission,
 }: {
   part: ChatPart;
   isStreaming: boolean;
   isFirst: boolean;
+  isLast: boolean;
   onReplyPermission: (permissionID: string, response: ChatPermissionResponse) => Promise<boolean>;
 }) {
   switch (part.type) {
@@ -382,7 +396,7 @@ function AssistantPart({
 
     case "reasoning":
       if (!part.text.trim()) return null;
-      return <ReasoningPart part={part} isStreaming={isStreaming} />;
+      return <ReasoningPart part={part} isStreaming={isStreaming} isLast={isLast} />;
 
     case "tool":
       if (part.tool === "task") return <SubagentToolPart part={part} />;
@@ -438,20 +452,52 @@ function AssistantPart({
 function ReasoningPart({
   part,
   isStreaming,
+  isLast,
 }: {
   part: Extract<ChatPart, { type: "reasoning" }>;
   isStreaming: boolean;
+  isLast: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+
+  // A reasoning block is "still thinking" only while it's the last visible
+  // part AND the overall message is still streaming. Once a text/tool part
+  // arrives after it (or the message completes), the reasoning block is done
+  // and we show "Thought for X seconds".
+  const isReasoningStreaming = isStreaming && isLast;
+
+  const startTimeRef = useRef<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
+
+  // Start the timer when reasoning streaming begins.
+  useEffect(() => {
+    if (isReasoningStreaming && startTimeRef.current === null) {
+      startTimeRef.current = Date.now();
+    }
+  }, [isReasoningStreaming]);
+
+  // Stop the timer and compute elapsed seconds when reasoning finishes.
+  useEffect(() => {
+    if (!isReasoningStreaming && startTimeRef.current !== null && elapsedSeconds === null) {
+      const seconds = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
+      setElapsedSeconds(seconds);
+    }
+  }, [isReasoningStreaming, elapsedSeconds]);
+
+  const thoughtLabel =
+    elapsedSeconds !== null
+      ? `Thought for ${elapsedSeconds}s`
+      : "Thought";
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
       <CollapsibleTrigger className="inline-flex items-center gap-2 rounded-md px-1 py-1 text-sm font-medium text-[var(--flare)] transition-colors hover:bg-[var(--void)]">
-        {isStreaming ? (
+        <Brain className="h-3.5 w-3.5 shrink-0 text-[var(--etch)]" />
+        {isReasoningStreaming ? (
           <TextShimmer className="text-sm font-medium">Thinking...</TextShimmer>
         ) : (
           <>
-            <span>Thought</span>
+            <span>{thoughtLabel}</span>
             <ChevronDown
               className={cn(
                 "h-3.5 w-3.5 shrink-0 text-[var(--etch)] transition-transform",
@@ -633,7 +679,7 @@ function SubagentToolPart({ part }: { part: Extract<ChatPart, { type: "tool" }> 
   const desc = ((input.description as string) || "Subagent task").trim();
   const prompt = (input.prompt as string) || "";
   const isActive = part.state.status === "pending" || part.state.status === "running";
-  const [isOpen, setIsOpen] = useState(isActive);
+  const [isOpen, setIsOpen] = useState(false);
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
