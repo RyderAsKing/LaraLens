@@ -65,10 +65,10 @@ export function ModelRelationshipView({
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="shrink-0 border-b border-[var(--chassis)] px-5 py-3">
+      <div className="shrink-0 border-b border-[var(--chassis)] px-5 py-2.5">
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <Boxes className="h-4 w-4" style={{ color: ACCENT_COLORS.model }} />
+          <div className="flex items-center gap-1.5">
+            <Boxes className="h-3.5 w-3.5" style={{ color: ACCENT_COLORS.model }} />
             <span className="text-sm font-semibold text-[var(--flare)]">
               Models
             </span>

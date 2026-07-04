@@ -107,7 +107,7 @@ export function RouteBrowser({
             <button
               onClick={() => onBrowse(c.path)}
               className={cn(
-                "inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:bg-[var(--accent)]",
+                "inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 transition-colors hover:bg-[var(--accent)]",
                 i === crumbs.length - 1
                   ? "font-medium text-[var(--flare)]"
                   : "text-[var(--etch)] hover:text-[var(--flare)]"
