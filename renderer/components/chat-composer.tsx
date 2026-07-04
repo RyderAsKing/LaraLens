@@ -24,11 +24,13 @@ import {
   ChevronDown,
   FileText,
   Brain,
+  Info,
 } from "lucide-react";
 import { useOpencode } from "@/hooks/use-opencode";
 import { useOpencodeChat } from "@/hooks/use-opencode-chat";
 import { CHAT_PRESETS } from "@/lib/chat-presets";
 import type { ChatMessage, ChatPart, ChatPermissionResponse } from "@/lib/opencode-types";
+import type { LaraLensSettings } from "@/lib/settings-types";
 import { cn } from "@/lib/utils";
 
 // prompt-kit components
@@ -84,9 +86,19 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [settings, setSettings] = useState<LaraLensSettings | null>(null);
 
   const connected = status?.state === "connected";
   const enabled = connected && !!projectRoot;
+
+  // Load saved settings (default agent + model) for the header tooltip.
+  useEffect(() => {
+    if (!open) return;
+    window.laralens.settings
+      .get()
+      .then(setSettings)
+      .catch(() => setSettings(null));
+  }, [open]);
 
   // Context size from the most recent assistant message that has token usage.
   const contextSize = useMemo(() => {
@@ -148,8 +160,30 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
     >
       {open ? (
         <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-[var(--chassis)] bg-[var(--optic)] shadow-2xl">
-          {/* Minimal header — actions + context size */}
+          {/* Minimal header — context + info (left), actions (right) */}
           <div className="flex shrink-0 items-center justify-between px-4 py-2.5">
+            <div className="flex items-center gap-2">
+              {contextSize !== null && (
+                <span className="text-[11px] tabular-nums text-[var(--etch)]">
+                  {formatTokens(contextSize)} context
+                </span>
+              )}
+              {settings && (settings.defaultAgent || settings.defaultModel) && (
+                <span
+                  title={[
+                    settings.defaultModel
+                      ? `Model: ${settings.defaultModel.providerID}/${settings.defaultModel.modelID}`
+                      : "Model: OpenCode default",
+                    settings.defaultAgent
+                      ? `Agent: ${settings.defaultAgent}`
+                      : "Agent: OpenCode default",
+                  ].join("\n")}
+                  className="inline-flex items-center text-[var(--etch)] opacity-70 transition-opacity hover:opacity-100"
+                >
+                  <Info className="h-3 w-3" />
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-1">
               <button
                 onClick={clear}
@@ -167,9 +201,6 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
                 <X className="h-3.5 w-3.5" />
               </button>
             </div>
-            <span className="text-[11px] tabular-nums text-[var(--etch)]">
-              {contextSize !== null ? `${formatTokens(contextSize)} context` : ""}
-            </span>
           </div>
 
           {/* Messages — ChatContainer with intelligent auto-scroll */}
@@ -317,7 +348,8 @@ function ChatMessageRow({
   return (
     <div className="flex w-full flex-col items-start gap-1.5">
       {showThinking ? (
-        <div className="flex min-h-[20px] items-center gap-2 py-1">
+        <div className="flex min-h-[20px] items-center gap-2 rounded-md px-1 py-1 text-sm font-medium text-[var(--flare)]">
+          <Brain className="h-3.5 w-3.5 shrink-0 text-[var(--etch)]" />
           <TextShimmer className="text-sm font-medium">Thinking...</TextShimmer>
         </div>
       ) : (
