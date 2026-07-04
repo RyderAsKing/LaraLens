@@ -167,6 +167,8 @@
   --animate-collapsible-up: collapsible-up 0.2s ease-out;
   --animate-collapsible-down: collapsible-down 0.2s ease-out;
   --animate-chatfade-in: chatfade-in 0.35s ease-out;
+  --animate-composer-bubble-in: composer-bubble-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-composer-float: composer-float 4.5s ease-in-out infinite;
 }
 
 @layer base {
@@ -350,6 +352,27 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes composer-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes composer-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
   }
 }
 

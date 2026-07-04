@@ -101,11 +101,15 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
       .catch(() => setSettings(null));
   }, [open]);
 
-  // Context size from the most recent assistant message that has token usage.
+  // Context size from the most recent assistant message that has real token
+  // usage. We require a non-zero input count because intermediate tool-call
+  // messages in a turn can carry a zeroed tokens object before the final
+  // message reports the authoritative count — trusting those would make the
+  // context size flicker to 0.
   const contextSize = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i];
-      if (m.role === "assistant" && m.tokens) {
+      if (m.role === "assistant" && m.tokens && m.tokens.input > 0) {
         return m.tokens.input + (m.tokens.cache?.read ?? 0);
       }
     }
@@ -130,6 +134,28 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
     [isStreaming, submitting]
   );
 
+  const composerLayerRef = useRef<HTMLDivElement>(null);
+
+  // Escape collapses the empty composer; focus the textarea shortly after it
+  // opens so the morph into the input feels continuous.
+  useEffect(() => {
+    if (!open || hasStartedConversation) return;
+    const focusTimer = setTimeout(() => {
+      composerLayerRef.current?.querySelector("textarea")?.focus();
+    }, 220);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      clearTimeout(focusTimer);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open, hasStartedConversation]);
+
   // Disabled pill — render but greyed out.
   if (!enabled && !open) {
     return (
@@ -151,109 +177,75 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
   }
 
   return (
-    <div
-      className={cn(
-        "fixed z-50 left-1/2 -translate-x-1/2 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-        open
-          ? hasStartedConversation
-            ? "bottom-4 h-[calc(100dvh-2rem)] w-[min(1100px,calc(100vw-2rem))]"
-            : "bottom-4 h-[min(520px,calc(100dvh-2rem))] w-[min(820px,calc(100vw-2rem))]"
-          : "bottom-4 h-11 w-auto"
+    <>
+      {/* Click-outside catcher — collapses the empty composer back to the pill. */}
+      {open && !hasStartedConversation && (
+        <div
+          className="fixed inset-0 z-40"
+          onClick={() => setOpen(false)}
+          aria-hidden
+        />
       )}
-    >
-      {open ? (
-        <div className="relative flex h-full flex-col overflow-hidden rounded-2xl border border-[var(--chassis)] bg-[var(--optic)] shadow-2xl">
-          {/* Minimal header — context + info (left), actions (right) */}
-          <div className="flex shrink-0 items-center justify-between px-4 py-2.5">
-            <div className="flex items-center gap-2">
-              {contextSize !== null && (
-                <span className="text-[11px] tabular-nums text-[var(--etch)]">
-                  {formatTokens(contextSize)} context
-                </span>
-              )}
-              {settings && (settings.defaultAgent || settings.defaultModel) && (
-                <span
-                  title={[
-                    settings.defaultModel
-                      ? `Model: ${settings.defaultModel.providerID}/${settings.defaultModel.modelID}`
-                      : "Model: OpenCode default",
-                    settings.defaultAgent
-                      ? `Agent: ${settings.defaultAgent}`
-                      : "Agent: OpenCode default",
-                  ].join("\n")}
-                  className="inline-flex items-center text-[var(--etch)] opacity-70 transition-opacity hover:opacity-100"
+
+      <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2">
+        {/* Suggestion bubbles — float above the composer, empty state only. */}
+        {open && !hasStartedConversation && messages.length === 0 && (
+          <div className="pointer-events-none absolute bottom-full left-1/2 mb-2 flex w-[min(768px,calc(100vw-2rem))] -translate-x-1/2 justify-center">
+            <div className="animate-composer-float flex flex-wrap justify-center gap-2">
+              {CHAT_PRESETS.map((preset, i) => (
+                <button
+                  key={preset.label}
+                  onClick={() => handlePreset(preset.prompt)}
+                  style={{ animationDelay: `${0.26 + i * 0.05}s` }}
+                  className="animate-composer-bubble-in pointer-events-auto rounded-full border border-[var(--chassis)] bg-[var(--void)]/95 px-3 py-1.5 text-xs text-[var(--etch)] shadow-lg shadow-black/20 backdrop-blur transition-colors hover:border-[var(--aperture)]/60 hover:text-[var(--flare)]"
                 >
-                  <Info className="h-3 w-3" />
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={clear}
-                disabled={messages.length === 0 || isStreaming}
-                title="Clear conversation"
-                className="rounded p-1.5 text-[var(--etch)] transition-colors hover:bg-[var(--void)] hover:text-[var(--flare)] disabled:opacity-30"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-              <button
-                onClick={() => setOpen(false)}
-                title="Close"
-                className="rounded p-1.5 text-[var(--etch)] transition-colors hover:bg-[var(--void)] hover:text-[var(--flare)]"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
+                  {preset.label}
+                </button>
+              ))}
             </div>
           </div>
+        )}
 
-          {/* Messages — ChatContainer with intelligent auto-scroll */}
-          <ChatContainerRoot className="min-h-0 flex-1">
-            <ChatContainerContent
-              className={cn(
-                "p-4 transition-[padding] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-                hasStartedConversation ? "pb-80" : "pb-36"
-              )}
-            >
-              {loading && messages.length === 0 ? (
-                <div className="flex min-h-full flex-1 items-center justify-center py-8 text-[var(--etch)]">
-                  <TextShimmer>Loading...</TextShimmer>
-                </div>
-              ) : messages.length === 0 ? (
-                <div className="flex min-h-full flex-1 items-center justify-center">
-                  <EmptyState onPreset={handlePreset} />
-                </div>
-              ) : (
-                <div key="messages" className="animate-chatfade-in flex flex-col gap-3">
-                  {messages.map((msg) => (
-                    <ChatMessageRow key={msg.id} message={msg} onReplyPermission={replyPermission} />
-                  ))}
-                </div>
-              )}
-            </ChatContainerContent>
-          </ChatContainerRoot>
-
-          {/* Floating input area */}
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 px-4 pb-4 pt-16 bg-gradient-to-t from-[var(--optic)] via-[var(--optic)]/95 to-transparent">
-            {error && (
-              <div className="pointer-events-auto mx-auto mb-3 flex max-w-3xl items-center gap-2 rounded-xl border border-[var(--destructive)]/25 bg-[var(--destructive)]/10 px-3 py-2 text-xs text-[var(--destructive)] shadow-lg backdrop-blur">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                <span className="flex-1 truncate">{error}</span>
-                <button
-                  onClick={dismissError}
-                  className="shrink-0 rounded p-0.5 hover:bg-[var(--destructive)]/20"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
+        {/* Morphing container — pill → composer → conversation panel. */}
+        <div
+          className={cn(
+            "relative overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
+            open
+              ? hasStartedConversation
+                ? "h-[calc(100dvh-2rem)] w-[min(1100px,calc(100vw-2rem))] rounded-2xl border border-[var(--chassis)] bg-[var(--optic)] shadow-2xl"
+                : "h-14 w-[min(768px,calc(100vw-2rem))] rounded-[1.75rem] border border-[var(--chassis)] bg-[var(--void)]/95 shadow-xl shadow-black/20 backdrop-blur supports-[backdrop-filter]:bg-[var(--void)]/80"
+              : "h-11 w-48 rounded-full bg-[var(--aperture)] shadow-lg"
+          )}
+        >
+          {/* Collapsed pill layer — also the click target that triggers the morph. */}
+          <button
+            onClick={() => setOpen(true)}
+            title="Open chat"
+            className={cn(
+              "absolute inset-0 flex items-center justify-center gap-2 rounded-full text-sm text-white transition-opacity duration-200",
+              open ? "pointer-events-none opacity-0" : "opacity-100 hover:brightness-110"
             )}
+          >
+            <MessageCircle className="h-4 w-4" />
+            <span>Ask anything...</span>
+          </button>
+
+          {/* Empty composer layer — the input the pill morphs into. */}
+          <div
+            ref={composerLayerRef}
+            className={cn(
+              "absolute inset-0 transition-opacity duration-300 delay-100",
+              open && !hasStartedConversation ? "opacity-100" : "pointer-events-none opacity-0"
+            )}
+          >
             <PromptInput
               value={input}
               onValueChange={setInput}
               onSubmit={handleSend}
               isLoading={isStreaming}
-              maxHeight={160}
+              maxHeight={40}
               disabled={!enabled}
-              className="pointer-events-auto mx-auto flex min-h-14 max-w-3xl items-end gap-3 rounded-[1.75rem] border-[var(--chassis)] bg-[var(--void)]/95 py-2 pl-5 pr-2 shadow-xl shadow-black/20 backdrop-blur supports-[backdrop-filter]:bg-[var(--void)]/80"
+              className="flex h-full w-full items-end gap-3 rounded-[1.75rem] border-0 bg-transparent py-2 pl-5 pr-2 shadow-none"
             >
               <PromptInputTextarea
                 placeholder="Ask anything..."
@@ -283,44 +275,126 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
               </PromptInputActions>
             </PromptInput>
           </div>
+
+          {/* Conversation panel layer — messages + floating input. */}
+          {open && hasStartedConversation && (
+            <div className="relative flex h-full w-full flex-col overflow-hidden">
+              {/* Minimal header — context + info (left), actions (right) */}
+              <div className="flex shrink-0 items-center justify-between px-4 py-2.5">
+                <div className="flex items-center gap-2">
+                  {contextSize !== null && (
+                    <span className="text-[11px] tabular-nums text-[var(--etch)]">
+                      {formatTokens(contextSize)} context
+                    </span>
+                  )}
+                  {settings && (settings.defaultAgent || settings.defaultModel) && (
+                    <span
+                      title={[
+                        settings.defaultModel
+                          ? `Model: ${settings.defaultModel.providerID}/${settings.defaultModel.modelID}`
+                          : "Model: OpenCode default",
+                        settings.defaultAgent
+                          ? `Agent: ${settings.defaultAgent}`
+                          : "Agent: OpenCode default",
+                      ].join("\n")}
+                      className="inline-flex items-center text-[var(--etch)] opacity-70 transition-opacity hover:opacity-100"
+                    >
+                      <Info className="h-3 w-3" />
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={clear}
+                    disabled={messages.length === 0 || isStreaming}
+                    title="Clear conversation"
+                    className="rounded p-1.5 text-[var(--etch)] transition-colors hover:bg-[var(--void)] hover:text-[var(--flare)] disabled:opacity-30"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setOpen(false)}
+                    title="Close"
+                    className="rounded p-1.5 text-[var(--etch)] transition-colors hover:bg-[var(--void)] hover:text-[var(--flare)]"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Messages — ChatContainer with intelligent auto-scroll */}
+              <ChatContainerRoot className="min-h-0 flex-1">
+                <ChatContainerContent className="p-4 pb-40 transition-[padding] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]">
+                  {loading && messages.length === 0 ? (
+                    <div className="flex min-h-full flex-1 items-center justify-center py-8 text-[var(--etch)]">
+                      <TextShimmer>Loading...</TextShimmer>
+                    </div>
+                  ) : (
+                    <div key="messages" className="animate-chatfade-in flex flex-col gap-3">
+                      {messages.map((msg) => (
+                        <ChatMessageRow key={msg.id} message={msg} onReplyPermission={replyPermission} />
+                      ))}
+                    </div>
+                  )}
+                </ChatContainerContent>
+              </ChatContainerRoot>
+
+              {/* Floating input area */}
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 px-4 pb-4 pt-16 bg-gradient-to-t from-[var(--optic)] via-[var(--optic)]/95 to-transparent">
+                {error && (
+                  <div className="pointer-events-auto mx-auto mb-3 flex max-w-3xl items-center gap-2 rounded-xl border border-[var(--destructive)]/25 bg-[var(--destructive)]/10 px-3 py-2 text-xs text-[var(--destructive)] shadow-lg backdrop-blur">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                    <span className="flex-1 truncate">{error}</span>
+                    <button
+                      onClick={dismissError}
+                      className="shrink-0 rounded p-0.5 hover:bg-[var(--destructive)]/20"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                )}
+                <PromptInput
+                  value={input}
+                  onValueChange={setInput}
+                  onSubmit={handleSend}
+                  isLoading={isStreaming}
+                  maxHeight={160}
+                  disabled={!enabled}
+                  className="pointer-events-auto mx-auto flex min-h-14 max-w-3xl items-end gap-3 rounded-[1.75rem] border-[var(--chassis)] bg-[var(--void)]/95 py-2 pl-5 pr-2 shadow-xl shadow-black/20 backdrop-blur supports-[backdrop-filter]:bg-[var(--void)]/80"
+                >
+                  <PromptInputTextarea
+                    placeholder="Ask anything..."
+                    className="min-h-10 flex-1 overflow-y-auto px-0 py-2 leading-6 text-[var(--flare)] placeholder:text-[var(--etch)]"
+                  />
+                  <PromptInputActions className="ml-auto shrink-0">
+                    {isStreaming ? (
+                      <PromptInputAction tooltip="Stop">
+                        <button
+                          onClick={abort}
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--destructive)] text-white transition-colors hover:brightness-110"
+                        >
+                          <Square className="h-3.5 w-3.5 fill-current" />
+                        </button>
+                      </PromptInputAction>
+                    ) : (
+                      <PromptInputAction tooltip="Send">
+                        <button
+                          onClick={handleSend}
+                          disabled={!input.trim() || !enabled || submitting}
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--aperture)] text-white transition-colors hover:brightness-110 disabled:opacity-30"
+                        >
+                          <ArrowUp className="h-4 w-4" />
+                        </button>
+                      </PromptInputAction>
+                    )}
+                  </PromptInputActions>
+                </PromptInput>
+              </div>
+            </div>
+          )}
         </div>
-      ) : (
-        /* Collapsed: pill button */
-        <button
-          onClick={() => setOpen(true)}
-          title="Open chat"
-          className="flex h-11 items-center gap-2 rounded-full bg-[var(--aperture)] px-5 text-sm text-white shadow-lg transition-all hover:brightness-110 hover:shadow-xl"
-        >
-          <MessageCircle className="h-4 w-4" />
-          <span>Ask anything...</span>
-        </button>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Empty state
-// ---------------------------------------------------------------------------
-
-function EmptyState({ onPreset }: { onPreset: (prompt: string) => void }) {
-  return (
-    <div className="flex w-full flex-col items-center justify-center gap-6 py-8 text-center animate-chatfade-in">
-      <h2 className="text-2xl font-semibold tracking-tight text-[var(--flare)]">
-        Ask anything about this project.
-      </h2>
-      <div className="flex flex-wrap justify-center gap-2 max-w-lg">
-        {CHAT_PRESETS.map((preset) => (
-          <button
-            key={preset.label}
-            onClick={() => onPreset(preset.prompt)}
-            className="rounded-lg border border-[var(--chassis)] bg-[var(--void)] px-3 py-1.5 text-xs text-[var(--etch)] transition-colors hover:border-[var(--aperture)]/50 hover:text-[var(--flare)]"
-          >
-            {preset.label}
-          </button>
-        ))}
       </div>
-    </div>
+    </>
   );
 }
 

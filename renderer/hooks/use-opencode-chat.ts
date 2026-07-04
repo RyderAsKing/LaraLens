@@ -129,7 +129,28 @@ export function useOpencodeChat(projectRoot: string | null) {
     const offTokens = window.opencode.chat.onTokens(({ projectRoot, messageId, tokens }) => {
       if (projectRoot !== projectRootRef.current) return;
       setMessages((prev) =>
-        prev.map((m) => (m.id === messageId ? { ...m, tokens } : m))
+        prev.map((m) => {
+          if (m.id !== messageId) return m;
+          // A turn can produce multiple assistant messages (e.g. tool calls +
+          // a final text message) that all map to this one local bubble. Each
+          // emits its own tokens event, and intermediate ones can carry zeroed
+          // counts. Merge so a non-zero count is never overwritten by a later
+          // zero — that's what made the context size flicker to 0.
+          const prevTokens = m.tokens;
+          if (!prevTokens) return { ...m, tokens };
+          return {
+            ...m,
+            tokens: {
+              input: tokens.input || prevTokens.input,
+              output: tokens.output || prevTokens.output,
+              reasoning: tokens.reasoning || prevTokens.reasoning,
+              cache: {
+                read: tokens.cache?.read || prevTokens.cache?.read || 0,
+                write: tokens.cache?.write || prevTokens.cache?.write || 0,
+              },
+            },
+          };
+        })
       );
     });
 
