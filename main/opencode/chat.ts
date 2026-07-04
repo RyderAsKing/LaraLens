@@ -13,15 +13,20 @@
  *   then forwarded to the renderer as `opencode:chat:*` IPC events.
  *
  * Message ID bridging:
- * - `promptAsync` returns 204 immediately (no message ID), so we generate a
- *   local UUID for the assistant message upfront.
- * - On the first `message.part.updated` / `message.updated` event for the
- *   new assistant message, we map the OpenCode message ID → local UUID.
+ * - We do NOT pass `messageID` to promptAsync. The server assigns the user
+ *   message ID and announces it via a `message.updated` event with role
+ *   "user" right after promptAsync is accepted. We map the in-flight
+ *   assistant bubble → that server-assigned user message ID so the idle
+ *   handler can fetch canonical content scoped to exactly this user turn.
+ * - We generate a local UUID for the assistant message upfront. On the first
+ *   `message.part.updated` / `message.updated` event for the new assistant
+ *   message, we map the OpenCode message ID → local UUID.
  */
 
 import { randomUUID } from "node:crypto";
 import type { OpencodeClient, Event, Part, Message, Permission } from "@opencode-ai/sdk";
-import type { ChatMessage, ChatPart, ChatToolState, ChatPermissionResponse } from "./types";
+import type { ChatMessage, ChatPart, ChatToolState, ChatPermissionResponse, ChatTokens } from "./types";
+import { getSettings } from "../settings";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -38,6 +43,10 @@ interface ChatSession {
   opencodeToLocal: Map<string, string>;
   /** OpenCode message IDs known not to be assistant responses (usually user messages). */
   ignoredOpencodeMessageIds: Set<string>;
+  /** Local assistant message ID → OpenCode user message ID for that prompt. */
+  assistantToUserMessageId: Map<string, string>;
+  /** Local assistant message IDs that have seen a primary session busy status. */
+  assistantIdsWithObservedBusy: Set<string>;
   /** Full text for text parts that arrived before message.updated confirmed role. */
   pendingPartTextByMessageId: Map<string, string>;
   /** Resolved default model (cached after first successful provider lookup). */
@@ -45,6 +54,12 @@ interface ChatSession {
 }
 
 type Broadcaster = (channel: string, payload: unknown) => void;
+
+interface AssistantContent {
+  content: string;
+  parts: ChatPart[];
+  complete: boolean;
+}
 
 // ---------------------------------------------------------------------------
 // State
@@ -60,6 +75,17 @@ let broadcast: Broadcaster | null = null;
 let streamShouldRun = false;
 let activeStream: AsyncGenerator<Event> | null = null;
 let activeStreamAbort: AbortController | null = null;
+let activeStreamDirectory: string | null = null;
+let activeStreamReady: Promise<void> | null = null;
+let resolveActiveStreamReady: (() => void) | null = null;
+
+function chatLog(message: string, details?: Record<string, unknown>): void {
+  if (details) {
+    console.info(`[opencode:chat] ${message}`, details);
+  } else {
+    console.info(`[opencode:chat] ${message}`);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Lifecycle
@@ -88,6 +114,8 @@ export function setClient(next: OpencodeClient | null): void {
       session.opencodeSessionId = "";
       session.opencodeToLocal.clear();
       session.ignoredOpencodeMessageIds.clear();
+      session.assistantToUserMessageId.clear();
+      session.assistantIdsWithObservedBusy.clear();
       session.pendingPartTextByMessageId.clear();
       session.pendingAssistantLocalId = null;
       delete session.resolvedModel;
@@ -95,7 +123,8 @@ export function setClient(next: OpencodeClient | null): void {
     sessionToProject.clear();
     projectsWithSendInProgress.clear();
   } else {
-    startStream();
+    const existingProjectRoot = [...sessions.keys()][0];
+    if (existingProjectRoot) void startStream(existingProjectRoot);
   }
 }
 
@@ -153,11 +182,16 @@ export async function send(
   const sessionId = chatSession.opencodeSessionId;
   const now = Date.now();
 
-  // User message.
-  // The OpenCode server requires messageID to start with "msg" (its internal ID
-  // convention); a bare UUID is rejected with BadRequest kind:Payload.
-  const opencodeUserMessageId = `msg_${randomUUID()}`;
-  rememberIgnoredMessageId(chatSession, opencodeUserMessageId);
+  // User message. We do NOT pre-generate an OpenCode message ID here. Kodachi
+  // (the reference OpenCode integration) does not pass `messageID` to
+  // promptAsync, and LaraLens previously generated `msg_<uuid>` on every
+  // prompt. Empirically the OpenCode server accepts the client-supplied ID on
+  // the FIRST prompt of a session but on FOLLOW-UP prompts it confirms the
+  // user message, transitions busy -> idle, and never emits an assistant
+  // message — i.e. it treats the second client-supplied messageID as a
+  // duplicate/revision and skips generation. Letting the server assign the
+  // user message ID (announced via the subsequent message.updated event with
+  // role "user") fixes follow-up prompts in the same session.
   chatSession.messages.push({
     id: randomUUID(),
     role: "user",
@@ -176,18 +210,25 @@ export async function send(
     status: "pending",
   });
   chatSession.pendingAssistantLocalId = assistantLocalId;
+  // assistantToUserMessageId is populated in handleMessageUpdated when the
+  // server announces the user message it created for this prompt.
+  chatLog("send accepted", {
+    projectRoot,
+    sessionId,
+    assistantLocalId,
+    promptLength: promptText.length,
+  });
 
-  // Fire the async prompt in the background. Returning immediately lets the
+  // Fire the prompt in the background. Returning immediately lets the
   // renderer append the user + pending assistant messages right away, so
-  // follow-up prompts visibly start processing even if promptAsync dispatch is
-  // slow or the server performs initial work before returning 204.
-  startStream();
+  // follow-up prompts visibly start processing even if prompt dispatch is
+  // slow or the server performs initial work before producing a response.
+  await startStream(projectRoot);
   void dispatchPromptAsync(
     projectRoot,
     sessionId,
     chatSession,
     assistantLocalId,
-    opencodeUserMessageId,
     promptText
   );
 
@@ -199,7 +240,6 @@ async function dispatchPromptAsync(
   sessionId: string,
   chatSession: ChatSession,
   assistantLocalId: string,
-  opencodeUserMessageId: string,
   promptText: string
 ): Promise<void> {
   try {
@@ -208,23 +248,39 @@ async function dispatchPromptAsync(
       return;
     }
 
-    // Resolve a model if we haven't cached one yet. The OpenCode server
-    // returns BadRequest when no model is configured AND none is passed.
-    if (!chatSession.resolvedModel) {
+    const appSettings = getSettings();
+
+    // Use the user's global model preference when set. Otherwise resolve and
+    // cache an automatic fallback, because OpenCode can reject prompts when no
+    // model is configured AND none is passed.
+    const selectedModel = appSettings.defaultModel ?? chatSession.resolvedModel;
+    if (!selectedModel && !chatSession.resolvedModel) {
       const model = await resolveDefaultModel(projectRoot);
       if (model) {
         chatSession.resolvedModel = model;
       }
     }
+    const promptModel = appSettings.defaultModel ?? chatSession.resolvedModel;
 
+    chatLog("prompt dispatch start", {
+      projectRoot,
+      sessionId,
+      assistantLocalId,
+    });
+
+    const promptAgent = await resolvePromptAgent(projectRoot, appSettings.defaultAgent);
+
+    // Use promptAsync here. We intentionally do NOT pass `messageID`: let the
+    // OpenCode server assign the user message ID and announce it via a
+    // message.updated event. Passing a client-generated messageID works on the
+    // first prompt of a session but causes the server to skip assistant
+    // generation on follow-up prompts in the same session.
     const result = await client.session.promptAsync({
       path: { id: sessionId },
       body: {
-        messageID: opencodeUserMessageId,
         parts: [{ type: "text", text: promptText }],
-        ...(chatSession.resolvedModel
-          ? { model: chatSession.resolvedModel }
-          : {}),
+        ...(promptModel ? { model: promptModel } : {}),
+        ...(promptAgent ? { agent: promptAgent } : {}),
       },
       query: { directory: projectRoot },
     });
@@ -232,7 +288,14 @@ async function dispatchPromptAsync(
       const msg = `Prompt failed: ${describeSdkError(result.error)}`;
       console.error("[opencode:chat] promptAsync rejected:", result.error);
       markAssistantError(chatSession, assistantLocalId, msg);
+      return;
     }
+
+    chatLog("promptAsync accepted", {
+      projectRoot,
+      sessionId,
+      assistantLocalId,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[opencode:chat] promptAsync threw:", err);
@@ -272,6 +335,8 @@ export async function abort(
       (message.status === "pending" || message.status === "streaming")
     ) {
       message.status = "complete";
+      chatSession.assistantToUserMessageId.delete(message.id);
+      chatSession.assistantIdsWithObservedBusy.delete(message.id);
       emitDone(projectRoot, message.id);
     }
   }
@@ -316,6 +381,8 @@ export function clear(projectRoot: string): void {
   chatSession.pendingAssistantLocalId = null;
   chatSession.opencodeToLocal.clear();
   chatSession.ignoredOpencodeMessageIds.clear();
+  chatSession.assistantToUserMessageId.clear();
+  chatSession.assistantIdsWithObservedBusy.clear();
   chatSession.pendingPartTextByMessageId.clear();
   delete chatSession.resolvedModel;
 }
@@ -333,6 +400,8 @@ function getOrCreateSession(projectRoot: string): ChatSession {
       pendingAssistantLocalId: null,
       opencodeToLocal: new Map(),
       ignoredOpencodeMessageIds: new Set(),
+      assistantToUserMessageId: new Map(),
+      assistantIdsWithObservedBusy: new Set(),
       pendingPartTextByMessageId: new Map(),
     };
     sessions.set(projectRoot, s);
@@ -433,6 +502,33 @@ async function resolveDefaultModel(
   }
 }
 
+async function resolvePromptAgent(
+  projectRoot: string,
+  agentName: string | null
+): Promise<string | null> {
+  const trimmed = agentName?.trim();
+  if (!trimmed) return null;
+  if (!client) return trimmed;
+
+  try {
+    const result = await client.app.agents({ query: { directory: projectRoot } });
+    const agent = result.data?.find((candidate) => candidate.name === trimmed);
+    if (agent?.mode === "subagent") {
+      chatLog("default agent ignored because it is subagent-only", {
+        projectRoot,
+        agent: trimmed,
+        mode: agent.mode,
+      });
+      return null;
+    }
+  } catch {
+    // If the agent list cannot be loaded, keep the saved value and let OpenCode
+    // validate it. This preserves compatibility with custom/older configs.
+  }
+
+  return trimmed;
+}
+
 async function createOpencodeSession(
   projectRoot: string
 ): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
@@ -518,6 +614,39 @@ function serializePart(part: Part): ChatPart | null {
   }
 }
 
+function isVisibleChatPart(part: ChatPart): boolean {
+  switch (part.type) {
+    case "text":
+    case "reasoning":
+      return part.text.trim().length > 0;
+    case "step-start":
+    case "step-finish":
+      return false;
+    default:
+      return true;
+  }
+}
+
+function hasVisibleAssistantContent(
+  value: AssistantContent | ChatMessage | null | undefined
+): boolean {
+  if (!value) return false;
+  if (value.content.trim().length > 0) return true;
+  return (value.parts ?? []).some(isVisibleChatPart);
+}
+
+function summarizeAssistantContent(
+  value: AssistantContent | null | undefined
+): Record<string, unknown> | null {
+  if (!value) return null;
+  return {
+    complete: value.complete,
+    contentLength: value.content.length,
+    partTypes: value.parts.map((part) => part.type),
+    visible: hasVisibleAssistantContent(value),
+  };
+}
+
 function markAssistantError(
   chatSession: ChatSession,
   localId: string,
@@ -527,7 +656,11 @@ function markAssistantError(
   if (!message) return;
   message.status = "error";
   message.error = error;
-  chatSession.pendingAssistantLocalId = null;
+  if (chatSession.pendingAssistantLocalId === localId) {
+    chatSession.pendingAssistantLocalId = null;
+  }
+  chatSession.assistantToUserMessageId.delete(localId);
+  chatSession.assistantIdsWithObservedBusy.delete(localId);
   emitError(chatSession, localId, error);
 }
 
@@ -544,6 +677,7 @@ function markInflightMessagesError(chatSession: ChatSession, error: string): voi
   }
   chatSession.pendingAssistantLocalId = null;
   chatSession.pendingPartTextByMessageId.clear();
+  chatSession.assistantIdsWithObservedBusy.clear();
 }
 
 function emitPart(
@@ -572,6 +706,16 @@ function emitError(chatSession: ChatSession, messageId: string, error: string): 
   broadcast?.("opencode:chat:error", { projectRoot, messageId, error });
 }
 
+function emitTokens(
+  chatSession: ChatSession,
+  messageId: string,
+  tokens: ChatTokens
+): void {
+  const projectRoot = projectRootFor(chatSession);
+  if (!projectRoot) return;
+  broadcast?.("opencode:chat:tokens", { projectRoot, messageId, tokens });
+}
+
 function projectRootFor(chatSession: ChatSession): string | undefined {
   for (const [projectRoot, session] of sessions) {
     if (session === chatSession) return projectRoot;
@@ -583,14 +727,28 @@ function projectRootFor(chatSession: ChatSession): string | undefined {
 // SSE event stream
 // ---------------------------------------------------------------------------
 
-function startStream(): void {
-  if (streamShouldRun) return;
+function startStream(projectRoot: string): Promise<void> {
+  if (streamShouldRun && activeStreamDirectory === projectRoot) {
+    return activeStreamReady ?? Promise.resolve();
+  }
+  if (streamShouldRun && activeStreamDirectory !== projectRoot) {
+    stopStream();
+  }
+  activeStreamDirectory = projectRoot;
   streamShouldRun = true;
+  activeStreamReady = new Promise((resolve) => {
+    resolveActiveStreamReady = resolve;
+  });
   void consumeStream();
+  return activeStreamReady;
 }
 
 function stopStream(): void {
   streamShouldRun = false;
+  activeStreamDirectory = null;
+  resolveActiveStreamReady?.();
+  resolveActiveStreamReady = null;
+  activeStreamReady = null;
   activeStreamAbort?.abort();
   activeStreamAbort = null;
   if (activeStream) {
@@ -601,13 +759,20 @@ function stopStream(): void {
 
 async function consumeStream(): Promise<void> {
   while (streamShouldRun && client) {
+    const directory = activeStreamDirectory;
+    if (!directory) break;
+    let shouldBackoff = false;
     try {
       activeStreamAbort = new AbortController();
       const result = await client.event.subscribe({
+        query: { directory },
         signal: activeStreamAbort.signal,
       });
+      chatLog("event stream subscribed", { directory });
       if (!streamShouldRun) break;
       activeStream = result.stream;
+      resolveActiveStreamReady?.();
+      resolveActiveStreamReady = null;
 
       for await (const event of result.stream) {
         if (!streamShouldRun) break;
@@ -615,13 +780,18 @@ async function consumeStream(): Promise<void> {
       }
     } catch {
       // Network error or stream closed — loop will retry if still active.
+      resolveActiveStreamReady?.();
+      resolveActiveStreamReady = null;
+      shouldBackoff = true;
     } finally {
       activeStream = null;
       activeStreamAbort = null;
     }
 
-    // Brief pause before reconnecting (avoids hot-looping on a dead server).
-    if (streamShouldRun && client) {
+    // Brief pause only after errors (avoids hot-looping on a dead server). When
+    // the server closes a healthy SSE response, reconnect immediately so a
+    // follow-up prompt sent right after a completed answer does not lose events.
+    if (shouldBackoff && streamShouldRun && client) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   }
@@ -631,7 +801,99 @@ async function consumeStream(): Promise<void> {
 // Event handling
 // ---------------------------------------------------------------------------
 
+function eventSessionId(event: Event): string | undefined {
+  switch (event.type) {
+    case "message.updated":
+      return event.properties.info.sessionID;
+    case "message.part.updated":
+      return event.properties.part.sessionID;
+    case "message.part.removed":
+    case "session.status":
+    case "session.idle":
+    case "session.error":
+    case "session.compacted":
+    case "permission.replied":
+      return event.properties.sessionID;
+    case "permission.updated":
+      return event.properties.sessionID;
+    case "session.created":
+    case "session.updated":
+    case "session.deleted":
+      return event.properties.info.id;
+    default:
+      return undefined;
+  }
+}
+
+function logRelevantEvent(event: Event): void {
+  const sessionId = eventSessionId(event);
+  if (!sessionId || !sessionToProject.has(sessionId)) return;
+
+  switch (event.type) {
+    case "session.status":
+      chatLog("event session.status", {
+        sessionId,
+        projectRoot: sessionToProject.get(sessionId),
+        status: event.properties.status,
+      });
+      break;
+    case "session.idle":
+      chatLog("event session.idle", {
+        sessionId,
+        projectRoot: sessionToProject.get(sessionId),
+      });
+      break;
+    case "session.error":
+      chatLog("event session.error", {
+        sessionId,
+        projectRoot: sessionToProject.get(sessionId),
+        error: event.properties.error,
+      });
+      break;
+    case "message.updated":
+      const info = event.properties.info;
+      chatLog("event message.updated", {
+        sessionId,
+        projectRoot: sessionToProject.get(sessionId),
+        messageId: info.id,
+        role: info.role,
+        completed: "completed" in info.time ? info.time.completed : undefined,
+        hasError: "error" in info ? Boolean(info.error) : false,
+      });
+      break;
+    case "message.part.updated":
+      chatLog("event message.part.updated", {
+        sessionId,
+        projectRoot: sessionToProject.get(sessionId),
+        messageId: event.properties.part.messageID,
+        partId: event.properties.part.id,
+        partType: event.properties.part.type,
+        deltaLength: event.properties.delta?.length ?? 0,
+      });
+      break;
+    case "permission.updated":
+      chatLog("event permission.updated", {
+        sessionId,
+        projectRoot: sessionToProject.get(sessionId),
+        permissionId: event.properties.id,
+        messageId: event.properties.messageID,
+        type: event.properties.type,
+        title: event.properties.title,
+      });
+      break;
+    case "permission.replied":
+      chatLog("event permission.replied", {
+        sessionId,
+        projectRoot: sessionToProject.get(sessionId),
+        permissionId: event.properties.permissionID,
+        response: event.properties.response,
+      });
+      break;
+  }
+}
+
 function handleEvent(event: Event): void {
+  logRelevantEvent(event);
   switch (event.type) {
     case "message.part.updated":
       handlePartUpdated(event.properties.part, event.properties.delta);
@@ -641,6 +903,9 @@ function handleEvent(event: Event): void {
       break;
     case "session.idle":
       void handleSessionIdle(event.properties.sessionID);
+      break;
+    case "session.status":
+      handleSessionStatus(event.properties.sessionID, event.properties.status);
       break;
     case "session.error":
       handleSessionError(
@@ -659,6 +924,26 @@ function handleEvent(event: Event): void {
       );
       break;
     // Other event types are not relevant to chat.
+  }
+}
+
+function handleSessionStatus(
+  sessionId: string | undefined,
+  status: { type: string }
+): void {
+  if (!sessionId || status.type !== "busy") return;
+  const projectRoot = sessionToProject.get(sessionId);
+  if (!projectRoot) return;
+  const chatSession = sessions.get(projectRoot);
+  if (!chatSession) return;
+
+  for (const message of chatSession.messages) {
+    if (
+      message.role === "assistant" &&
+      (message.status === "pending" || message.status === "streaming")
+    ) {
+      chatSession.assistantIdsWithObservedBusy.add(message.id);
+    }
   }
 }
 
@@ -831,6 +1116,24 @@ function handleMessageUpdated(info: Message): void {
   if (info.role !== "assistant") {
     rememberIgnoredMessageId(chatSession, info.id);
     chatSession.pendingPartTextByMessageId.delete(info.id);
+
+    // The server just announced the user message it created for our most recent
+    // prompt (we no longer pass messageID to promptAsync). Associate this
+    // OpenCode user message ID with the in-flight assistant bubble so the idle
+    // handler can fetch canonical content for exactly this user turn.
+    if (info.role === "user" && chatSession.pendingAssistantLocalId) {
+      const pendingId = chatSession.pendingAssistantLocalId;
+      const existing = chatSession.assistantToUserMessageId.get(pendingId);
+      if (!existing) {
+        chatSession.assistantToUserMessageId.set(pendingId, info.id);
+        chatLog("user message id assigned", {
+          projectRoot,
+          sessionId: info.sessionID,
+          assistantLocalId: pendingId,
+          userMessageId: info.id,
+        });
+      }
+    }
     return;
   }
 
@@ -899,6 +1202,22 @@ function handleMessageUpdated(info: Message): void {
     }
   }
 
+  // Update token usage for the assistant turn. AssistantMessage always
+  // carries a `tokens` field; emit it so the renderer can display context size.
+  if (info.tokens) {
+    const tokens: ChatTokens = {
+      input: info.tokens.input ?? 0,
+      output: info.tokens.output ?? 0,
+      reasoning: info.tokens.reasoning ?? 0,
+      cache: {
+        read: info.tokens.cache?.read ?? 0,
+        write: info.tokens.cache?.write ?? 0,
+      },
+    };
+    message.tokens = tokens;
+    emitTokens(chatSession, localId, tokens);
+  }
+
   // NOTE: Do NOT mark the message complete on info.time.completed here.
   // When tools/agents are involved, OpenCode emits multiple assistant messages
   // per turn (tool-call messages + a final text message). An intermediate
@@ -915,10 +1234,11 @@ function handleMessageUpdated(info: Message): void {
  * opencode/kodachi's canonical "latest assistant response" pattern and
  * avoiding intermediate protocol text leaks.
  */
-async function fetchLatestAssistantContent(
+async function fetchAssistantContentAfterUser(
   sessionId: string,
-  projectRoot: string
-): Promise<{ content: string; parts: ChatPart[] } | null> {
+  projectRoot: string,
+  userMessageId: string
+): Promise<AssistantContent | null> {
   if (!client) return null;
   try {
     const result = await client.session.messages({
@@ -927,16 +1247,18 @@ async function fetchLatestAssistantContent(
     });
     if (!result.data) return null;
 
-    // Find the index of the last user message — everything after it is the
-    // current turn's assistant response(s).
+    // Find the exact user prompt this local assistant bubble belongs to. This
+    // prevents a delayed/stale session.idle from finalizing a follow-up prompt
+    // before the server has produced any assistant response for it.
     const messages = result.data;
-    let lastUserIdx = -1;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].info.role === "user") {
-        lastUserIdx = i;
+    let userIdx = -1;
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i].info.role === "user" && messages[i].info.id === userMessageId) {
+        userIdx = i;
         break;
       }
     }
+    if (userIdx < 0) return null;
 
     // Keep rich progress parts from the whole turn, but use only the latest
     // assistant text message as the final answer. Concatenating every assistant
@@ -946,12 +1268,21 @@ async function fetchLatestAssistantContent(
     let latestTextParts: ChatPart[] = [];
     let latestText = "";
     const seenIds = new Set<string>();
-    for (let i = lastUserIdx + 1; i < messages.length; i++) {
-      if (messages[i].info.role !== "assistant") continue;
+    let sawAssistant = false;
+    let allAssistantCompleted = true;
+    for (let i = userIdx + 1; i < messages.length; i++) {
+      const serverMessage = messages[i];
+      const info = serverMessage.info;
+      if (info.role === "user") break;
+      if (info.role !== "assistant") continue;
+      sawAssistant = true;
+      if (!info.time.completed) {
+        allAssistantCompleted = false;
+      }
 
       const messageTextParts: ChatPart[] = [];
       let messageText = "";
-      for (const part of messages[i].parts) {
+      for (const part of serverMessage.parts) {
         const serialized = serializePart(part);
         if (!serialized) continue;
         if (serialized.type === "text") {
@@ -971,10 +1302,41 @@ async function fetchLatestAssistantContent(
       }
     }
 
-    return { content: latestText, parts: [...nonTextParts, ...latestTextParts] };
+    if (!sawAssistant) return null;
+    return {
+      content: latestText,
+      parts: [...nonTextParts, ...latestTextParts],
+      complete: allAssistantCompleted,
+    };
   } catch {
     return null;
   }
+}
+
+function completeAssistantMessage(
+  projectRoot: string,
+  chatSession: ChatSession,
+  message: ChatMessage,
+  canonical: AssistantContent | null
+): void {
+  if (canonical) {
+    const existingPermissionParts = (message.parts ?? []).filter(
+      (part): part is Extract<ChatPart, { type: "permission" }> =>
+        part.type === "permission"
+    );
+    // Apply the canonical content if it's more complete than what we streamed.
+    if (canonical.content && canonical.content.length > message.content.length) {
+      message.content = canonical.content;
+    }
+    // Replace streamed server parts with the canonical set, but keep permission
+    // prompts/replies: OpenCode emits permissions as out-of-band events, so
+    // they are not returned by session.messages().
+    message.parts = [...canonical.parts, ...existingPermissionParts];
+  }
+  message.status = "complete";
+  chatSession.assistantToUserMessageId.delete(message.id);
+  chatSession.assistantIdsWithObservedBusy.delete(message.id);
+  emitDone(projectRoot, message.id, message.content, message.parts);
 }
 
 /**
@@ -990,37 +1352,106 @@ async function handleSessionIdle(sessionId: string): Promise<void> {
   const chatSession = sessions.get(projectRoot);
   if (!chatSession) return;
 
-  // Fetch the canonical content + parts. This is the source of truth — even
-  // if we missed every streaming event, this gives us the complete response.
-  const canonical = await fetchLatestAssistantContent(sessionId, projectRoot);
+  // Capture the exact assistant bubble(s) that were in flight when this idle
+  // event arrived. The canonical fetch below yields to the event loop; a user
+  // can send a follow-up during that await. If we later complete every pending
+  // assistant message, we can accidentally complete the new turn before its
+  // streaming events arrive, causing those events to be ignored.
+  const targetMessageIds = new Set(
+    chatSession.messages
+      .filter(
+        (message) =>
+          message.role === "assistant" &&
+          (message.status === "pending" || message.status === "streaming")
+      )
+      .map((message) => message.id)
+  );
+  const pendingAssistantLocalIdAtStart = chatSession.pendingAssistantLocalId;
+  const pendingPartMessageIdsAtStart = new Set(chatSession.pendingPartTextByMessageId.keys());
+  const completedTargetIds = new Set<string>();
 
-  for (const message of chatSession.messages) {
+  for (const messageId of targetMessageIds) {
+    const message = chatSession.messages.find((candidate) => candidate.id === messageId);
     if (
-      message.role === "assistant" &&
-      (message.status === "pending" || message.status === "streaming")
+      !message ||
+      message.role !== "assistant" ||
+      (message.status !== "pending" && message.status !== "streaming")
     ) {
-      if (canonical) {
-        const existingPermissionParts = (message.parts ?? []).filter(
-          (part): part is Extract<ChatPart, { type: "permission" }> =>
-            part.type === "permission"
-        );
-        // Apply the canonical content if it's more complete than what we streamed.
-        if (canonical.content && canonical.content.length > message.content.length) {
-          message.content = canonical.content;
+      continue;
+    }
+
+    // Fetch canonical content for this exact local turn. The OpenCode server
+    // can emit session.idle before session.messages() reflects the assistant
+    // response (eventual consistency), so retry a few times when the session
+    // was observed busy. A stale idle from a previous turn will find nothing
+    // after the retries too, so we leave the bubble pending — a later
+    // message.updated or session.idle will complete it.
+    const userMessageId = chatSession.assistantToUserMessageId.get(message.id);
+    const observedBusy = chatSession.assistantIdsWithObservedBusy.has(message.id);
+
+    let canonical: AssistantContent | null = null;
+    if (userMessageId) {
+      const maxRetries = observedBusy ? 4 : 1;
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        canonical = await fetchAssistantContentAfterUser(sessionId, projectRoot, userMessageId);
+        if (canonical) break;
+        if (attempt < maxRetries - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
-        // Replace streamed server parts with the canonical set, but keep
-        // permission prompts/replies: OpenCode emits permissions as out-of-band
-        // events, so they are not returned by session.messages(). Dropping them
-        // here can make an approved/denied permission disappear exactly when the
-        // turn completes.
-        message.parts = [...canonical.parts, ...existingPermissionParts];
       }
-      message.status = "complete";
-      emitDone(projectRoot, message.id, message.content, message.parts);
+    }
+    if (message.status !== "pending" && message.status !== "streaming") {
+      continue;
+    }
+    const hasStreamedProgress = hasVisibleAssistantContent(message);
+
+    if (!canonical && !hasStreamedProgress) {
+      // No assistant content yet — leave the bubble pending. A stale idle from
+      // a prior turn, or a slow server write, will be resolved by the next
+      // message.updated / message.part.updated / session.idle event.
+      chatLog("idle leaving pending (no canonical yet)", {
+        projectRoot,
+        sessionId,
+        messageId: message.id,
+        userMessageId,
+        observedBusy,
+      });
+      continue;
+    }
+    if (canonical && !hasVisibleAssistantContent(canonical) && !hasStreamedProgress) {
+      chatLog("idle skipped empty canonical", {
+        projectRoot,
+        sessionId,
+        messageId: message.id,
+        canonical: summarizeAssistantContent(canonical),
+      });
+      continue;
+    }
+
+    completeAssistantMessage(
+      projectRoot,
+      chatSession,
+      message,
+      hasVisibleAssistantContent(canonical) ? canonical : null
+    );
+    completedTargetIds.add(message.id);
+  }
+
+  if (
+    chatSession.pendingAssistantLocalId === pendingAssistantLocalIdAtStart &&
+    pendingAssistantLocalIdAtStart &&
+    completedTargetIds.has(pendingAssistantLocalIdAtStart)
+  ) {
+    chatSession.pendingAssistantLocalId = null;
+  }
+  // Only remove buffered text that existed for this idle turn. A follow-up can
+  // buffer text while the canonical fetch is in flight, and that text still
+  // needs to be available when its message.updated event arrives.
+  if (completedTargetIds.size > 0) {
+    for (const messageId of pendingPartMessageIdsAtStart) {
+      chatSession.pendingPartTextByMessageId.delete(messageId);
     }
   }
-  chatSession.pendingAssistantLocalId = null;
-  chatSession.pendingPartTextByMessageId.clear();
 }
 
 /** Session-level error — mark in-flight messages as errored. */

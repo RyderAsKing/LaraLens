@@ -126,10 +126,18 @@ export function useOpencodeChat(projectRoot: string | null) {
       setError(msg);
     });
 
+    const offTokens = window.opencode.chat.onTokens(({ projectRoot, messageId, tokens }) => {
+      if (projectRoot !== projectRootRef.current) return;
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, tokens } : m))
+      );
+    });
+
     return () => {
       offPart();
       offDone();
       offError();
+      offTokens();
     };
   }, []);
 

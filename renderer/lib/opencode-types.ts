@@ -58,6 +58,13 @@ export type ChatPart =
   | { id: string; type: "step-finish"; reason: string }
   | { id: string; type: "file"; mime: string; filename?: string; url: string };
 
+export interface ChatTokens {
+  input: number;
+  output: number;
+  reasoning: number;
+  cache: { read: number; write: number };
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatRole;
@@ -66,4 +73,5 @@ export interface ChatMessage {
   createdAt: number;
   status: ChatMessageStatus;
   error?: string;
+  tokens?: ChatTokens;
 }
