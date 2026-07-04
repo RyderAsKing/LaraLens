@@ -122,8 +122,8 @@ export function SettingsDialog({ open, projectRoot, onClose }: SettingsDialogPro
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm animate-chatfade-in" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-      <div className="flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-[var(--chassis)] bg-[var(--void)] shadow-2xl animate-chatfade-in">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm animate-settings-fade-in" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div className="flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-[var(--chassis)] bg-[var(--void)] shadow-2xl animate-settings-pop-in">
         <header className="flex items-start justify-between gap-4 border-b border-[var(--chassis)] px-5 py-4">
           <div className="min-w-0">
             <h2 id="settings-title" className="text-base font-semibold text-[var(--flare)]">
@@ -150,7 +150,7 @@ export function SettingsDialog({ open, projectRoot, onClose }: SettingsDialogPro
             </div>
           )}
 
-          <div className="grid gap-10 px-1 py-2 lg:grid-cols-2">
+          <div className="flex flex-col gap-8 px-1 py-2">
             <div>
               <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-[var(--flare)]">
                 <Cpu className="h-4 w-4 text-[var(--aperture)]" />
