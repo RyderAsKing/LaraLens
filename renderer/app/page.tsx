@@ -8,6 +8,7 @@ import { RouteDetail } from "@/components/route-detail";
 import { ModelRelationshipView } from "@/components/model-relationship-view";
 import { EmptyState, type RecentProject } from "@/components/empty-state";
 import { ChatComposer } from "@/components/chat-composer";
+import { SettingsDialog } from "@/components/settings-dialog";
 import { useScan } from "@/hooks/use-scan";
 
 const RECENT_PROJECTS_KEY = "laralens:recent-projects";
@@ -29,6 +30,7 @@ export default function Page() {
   const [featureMode, setFeatureMode] = useState<FeatureMode>("routes");
   const [showHome, setShowHome] = useState(false);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const graph = result?.graph ?? null;
   const summary = result?.summary ?? null;
@@ -129,6 +131,7 @@ export default function Page() {
         featureMode={featureMode}
         onFeatureModeChange={handleFeatureModeChange}
         onHome={handleHome}
+        onOpenSettings={() => setSettingsOpen(true)}
         onPickAndScan={handlePickAndScan}
         onRescan={handleRescan}
       />
@@ -180,6 +183,11 @@ export default function Page() {
       )}
 
       <ChatComposer projectRoot={projectPath} />
+      <SettingsDialog
+        open={settingsOpen}
+        projectRoot={projectPath}
+        onClose={() => setSettingsOpen(false)}
+      />
     </div>
   );
 }
