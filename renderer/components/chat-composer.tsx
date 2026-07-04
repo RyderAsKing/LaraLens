@@ -62,6 +62,16 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+function capitalize(s: string): string {
+  return s.length ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
+type ChatActivity = {
+  kind: "thinking" | "tool" | "permission" | "working";
+  label: string;
+  Icon: typeof Wrench;
+};
+
 /**
  * Floating chat composer — a maximized bottom-center panel with live streaming
  * of tool calls, sub-agents, reasoning, and markdown text.
@@ -87,10 +97,34 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
   const [input, setInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [settings, setSettings] = useState<LaraLensSettings | null>(null);
+  // Deferred mount of the heavy conversation subtree (messages list,
+  // StickToBottom observer, floating PromptInput). Rendering it synchronously
+  // while the container morphs causes layout thrash that freezes the morph
+  // animation mid-flight. We wait until the morph's fast phase is done so the
+  // panel fades in cleanly over the slow tail.
+  const [panelReady, setPanelReady] = useState(false);
 
   const connected = status?.state === "connected";
   const enabled = connected && !!projectRoot;
   const hasStartedConversation = messages.length > 0 || isStreaming || submitting;
+
+  // Deferred mount of the conversation panel — see `panelReady` state above.
+  // The morph transition is ease-out, so the bulk of the size/radius change
+  // happens in the first ~100ms. Mounting the heavy subtree at ~120ms means
+  // any layout work lands in the slow tail of the morph where a dropped frame
+  // is imperceptible, and the panel's fade-in animation overlaps the rest of
+  // the morph for a clean handoff.
+  useEffect(() => {
+    if (!open || !hasStartedConversation) {
+      setPanelReady(false);
+      return;
+    }
+    const id = window.setTimeout(() => setPanelReady(true), 120);
+    return () => {
+      window.clearTimeout(id);
+      setPanelReady(false);
+    };
+  }, [open, hasStartedConversation]);
 
   // Load saved settings (default agent + model) for the header tooltip.
   useEffect(() => {
@@ -115,6 +149,50 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
     }
     return null;
   }, [messages]);
+
+  // Live activity indicator — derived from the streaming assistant message's
+  // last active part. Drives the pill's status label (e.g. "Thinking...",
+  // "Reading file.ts", "Searching...") shown while the chat is minimized and
+  // a turn is in flight.
+  const activity = useMemo<ChatActivity | null>(() => {
+    if (!isStreaming) return null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role !== "assistant") continue;
+      if (m.status !== "pending" && m.status !== "streaming") continue;
+      const visibleParts = (m.parts ?? []).filter(isRenderableChatPart);
+      for (let j = visibleParts.length - 1; j >= 0; j--) {
+        const part = visibleParts[j];
+        if (part.type === "tool") {
+          const st = part.state;
+          if (st.status === "pending" || st.status === "running") {
+            const subtitle = getToolSubtitle(part);
+            return {
+              kind: "tool",
+              label: subtitle || capitalize(part.tool),
+              Icon: getToolIcon(part.tool),
+            };
+          }
+        }
+        if (part.type === "permission" && part.status === "pending") {
+          return {
+            kind: "permission",
+            label: "Permission required",
+            Icon: HelpCircle,
+          };
+        }
+        // A reasoning block counts as "thinking" only while it is the very
+        // last visible part — once a text/tool part follows, the model has
+        // moved on.
+        if (part.type === "reasoning" && j === visibleParts.length - 1) {
+          return { kind: "thinking", label: "Thinking...", Icon: Brain };
+        }
+      }
+      // Streaming but no identifiable active part yet.
+      return { kind: "working", label: "Working...", Icon: Loader2 };
+    }
+    return null;
+  }, [messages, isStreaming]);
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || isStreaming || submitting || !enabled) return;
@@ -206,18 +284,31 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
           </div>
         )}
 
-        {/* Morphing container — pill → composer → conversation panel. */}
+        {/* Morphing container — pill → composer → conversation panel.
+            Per-property durations: size/radius/shadow morph smoothly over
+            300ms while the background color snaps in ~100ms so the gray
+            panel reads as "already there" instead of slowly crossfading. */}
         <div
+          style={{
+            transitionProperty:
+              "width, height, border-radius, box-shadow, background-color",
+            transitionDuration: "300ms, 300ms, 300ms, 300ms, 100ms",
+            transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
+          }}
           className={cn(
-            "relative overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
+            "relative overflow-hidden",
+            !open && activity && "animate-pill-active-pulse",
             open
               ? hasStartedConversation
                 ? "h-[calc(100dvh-2rem)] w-[min(1100px,calc(100vw-2rem))] rounded-2xl border border-[var(--chassis)] bg-[var(--optic)] shadow-2xl"
                 : "h-14 w-[min(768px,calc(100vw-2rem))] rounded-[1.75rem] border border-[var(--chassis)] bg-[var(--void)]/95 shadow-xl shadow-black/20 backdrop-blur supports-[backdrop-filter]:bg-[var(--void)]/80"
-              : "h-11 w-48 rounded-full bg-[var(--aperture)] shadow-lg"
+              : "h-11 w-48 rounded-[22px] bg-[var(--aperture)] shadow-lg"
           )}
         >
-          {/* Collapsed pill layer — also the click target that triggers the morph. */}
+          {/* Collapsed pill layer — also the click target that triggers the morph.
+              When a turn is in flight, the label becomes a live status
+              (Thinking... / Reading file.ts / Searching...) with a shimmer and
+              the relevant tool icon, so minimized users can see what's happening. */}
           <button
             onClick={() => setOpen(true)}
             title="Open chat"
@@ -226,15 +317,48 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
               open ? "pointer-events-none opacity-0" : "opacity-100 hover:brightness-110"
             )}
           >
-            <MessageCircle className="h-4 w-4" />
-            <span>Ask anything...</span>
+            {activity ? (
+              <>
+                <activity.Icon
+                  className={cn(
+                    "h-4 w-4 shrink-0",
+                    activity.kind === "working" && "animate-spin",
+                    activity.kind === "thinking" && "animate-pulse"
+                  )}
+                />
+                <span
+                  className="max-w-[14ch] truncate bg-[length:200%_auto] bg-clip-text text-transparent animate-[shimmer_2.5s_linear_infinite]"
+                  style={{
+                    backgroundImage:
+                      "linear-gradient(to right, rgba(255,255,255,0.55) 35%, #fff 50%, rgba(255,255,255,0.55) 65%)",
+                  }}
+                >
+                  {activity.label}
+                </span>
+              </>
+            ) : hasStartedConversation ? (
+              <>
+                <MessageCircle className="h-4 w-4" />
+                <span>Continue</span>
+              </>
+            ) : (
+              <>
+                <MessageCircle className="h-4 w-4" />
+                <span>Ask anything...</span>
+              </>
+            )}
           </button>
 
-          {/* Empty composer layer — the input the pill morphs into. */}
+          {/* Empty composer layer — the input the pill morphs into.
+              Anchored to the bottom at a fixed h-14 (instead of inset-0) so
+              that when the container morphs to the full conversation panel the
+              input stays at its natural size at the bottom and crossfades with
+              the panel's floating input, rather than stretching to fill the
+              growing container. */}
           <div
             ref={composerLayerRef}
             className={cn(
-              "absolute inset-0 transition-opacity duration-300 delay-100",
+              "absolute inset-x-0 bottom-0 h-14 transition-opacity duration-200",
               open && !hasStartedConversation ? "opacity-100" : "pointer-events-none opacity-0"
             )}
           >
@@ -276,9 +400,11 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
             </PromptInput>
           </div>
 
-          {/* Conversation panel layer — messages + floating input. */}
-          {open && hasStartedConversation && (
-            <div className="relative flex h-full w-full flex-col overflow-hidden">
+          {/* Conversation panel layer — messages + floating input. Mounted
+              after the morph's fast phase (see panelReady) so its layout work
+              doesn't freeze the container animation. */}
+          {open && hasStartedConversation && panelReady && (
+            <div className="animate-panel-fade-in relative flex h-full w-full flex-col overflow-hidden">
               {/* Minimal header — context + info (left), actions (right) */}
               <div className="flex shrink-0 items-center justify-between px-4 py-2.5">
                 <div className="flex items-center gap-2">

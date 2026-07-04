@@ -167,6 +167,8 @@
   --animate-collapsible-up: collapsible-up 0.2s ease-out;
   --animate-collapsible-down: collapsible-down 0.2s ease-out;
   --animate-chatfade-in: chatfade-in 0.35s ease-out;
+  --animate-panel-fade-in: panel-fade-in 0.2s ease-out;
+  --animate-pill-active-pulse: pill-active-pulse 2s ease-in-out infinite;
   --animate-composer-bubble-in: composer-bubble-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
   --animate-composer-float: composer-float 4.5s ease-in-out infinite;
 }
@@ -355,6 +357,15 @@
   }
 }
 
+@keyframes panel-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @keyframes composer-bubble-in {
   from {
     opacity: 0;
@@ -470,5 +481,14 @@
   50% {
     opacity: 1;
     transform: translateX(2px);
+  }
+}
+
+@keyframes pill-active-pulse {
+  0%, 100% {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  }
+  50% {
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.28), 0 0 0 2px rgba(255, 255, 255, 0.16);
   }
 }
