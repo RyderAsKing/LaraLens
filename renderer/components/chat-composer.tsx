@@ -207,15 +207,19 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
           <ChatContainerRoot className="min-h-0 flex-1">
             <ChatContainerContent className="gap-3 p-4">
               {loading && messages.length === 0 ? (
-                <div className="flex items-center justify-center py-8 text-[var(--etch)]">
+                <div className="flex h-full items-center justify-center py-8 text-[var(--etch)]">
                   <TextShimmer>Loading...</TextShimmer>
                 </div>
               ) : messages.length === 0 ? (
-                <EmptyState onPreset={handlePreset} />
+                <div className="flex h-full items-center justify-center">
+                  <EmptyState onPreset={handlePreset} />
+                </div>
               ) : (
-                messages.map((msg) => (
-                  <ChatMessageRow key={msg.id} message={msg} onReplyPermission={replyPermission} />
-                ))
+                <div key="messages" className="animate-chatfade-in flex flex-col gap-3">
+                  {messages.map((msg) => (
+                    <ChatMessageRow key={msg.id} message={msg} onReplyPermission={replyPermission} />
+                  ))}
+                </div>
               )}
             </ChatContainerContent>
           </ChatContainerRoot>
@@ -294,7 +298,7 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
 
 function EmptyState({ onPreset }: { onPreset: (prompt: string) => void }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-6 py-16 text-center">
+    <div className="flex w-full flex-col items-center justify-center gap-6 py-8 text-center animate-chatfade-in">
       <h2 className="text-2xl font-semibold tracking-tight text-[var(--flare)]">
         Ask anything about this project.
       </h2>
