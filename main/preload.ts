@@ -22,12 +22,21 @@ const laralens = {
 
   readCodeFile: (file: string) =>
     ipcRenderer.invoke("laralens:read-code-file", file) as Promise<{ ok: boolean; content?: string; error?: string }>,
+
+  settings: {
+    get: () => ipcRenderer.invoke("laralens:settings:get") as Promise<LaraLensSettings>,
+    update: (patch: Partial<LaraLensSettings>) =>
+      ipcRenderer.invoke("laralens:settings:update", patch) as Promise<LaraLensSettings>,
+    options: (projectRoot?: string | null) =>
+      ipcRenderer.invoke("laralens:settings:options", { projectRoot }) as Promise<SettingsOptionsResult>,
+  },
 };
 
 /** Chat streaming event payloads pushed from main → renderer. */
 type ChatPartPayload = { projectRoot: string; messageId: string; part: ChatPart; delta?: string };
 type ChatDonePayload = { projectRoot: string; messageId: string; content?: string; parts?: ChatPart[] };
 type ChatErrorPayload = { projectRoot: string; messageId: string; error: string };
+type ChatTokensPayload = { projectRoot: string; messageId: string; tokens: ChatTokens };
 
 /**
  * The OpenCode API exposed to the renderer process.
@@ -118,6 +127,16 @@ const opencode = {
         ipcRenderer.off("opencode:chat:error", listener);
       };
     },
+
+    /** Subscribe to token-usage updates for an assistant message. */
+    onTokens: (callback: (payload: ChatTokensPayload) => void) => {
+      const listener = (_event: IpcRendererEvent, payload: ChatTokensPayload) =>
+        callback(payload);
+      ipcRenderer.on("opencode:chat:tokens", listener);
+      return () => {
+        ipcRenderer.off("opencode:chat:tokens", listener);
+      };
+    },
   },
 };
 
@@ -205,6 +224,59 @@ export type ChatMessage = {
   parts?: ChatPart[];
   createdAt: number;
   status: ChatMessageStatus;
+  error?: string;
+  tokens?: ChatTokens;
+};
+
+export type ChatTokens = {
+  input: number;
+  output: number;
+  reasoning: number;
+  cache: { read: number; write: number };
+};
+
+export type ModelSelection = {
+  providerID: string;
+  modelID: string;
+};
+
+export type LaraLensSettings = {
+  defaultAgent: string | null;
+  defaultModel: ModelSelection | null;
+};
+
+export type SettingsModel = {
+  id: string;
+  providerID: string;
+  name: string;
+  status: string;
+  contextLimit: number;
+  outputLimit: number;
+  supportsTools: boolean;
+  supportsReasoning: boolean;
+};
+
+export type SettingsProvider = {
+  id: string;
+  name: string;
+  source: string;
+  models: SettingsModel[];
+};
+
+export type SettingsAgent = {
+  name: string;
+  description?: string;
+  mode: string;
+  builtIn: boolean;
+  color?: string;
+  model?: ModelSelection;
+};
+
+export type SettingsOptionsResult = {
+  ok: boolean;
+  settings: LaraLensSettings;
+  providers: SettingsProvider[];
+  agents: SettingsAgent[];
   error?: string;
 };
 

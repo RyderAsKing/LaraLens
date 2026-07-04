@@ -82,6 +82,13 @@ export type ChatPart =
   | { id: string; type: "step-finish"; reason: string }
   | { id: string; type: "file"; mime: string; filename?: string; url: string };
 
+export interface ChatTokens {
+  input: number;
+  output: number;
+  reasoning: number;
+  cache: { read: number; write: number };
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatRole;
@@ -90,6 +97,7 @@ export interface ChatMessage {
   createdAt: number;
   status: ChatMessageStatus;
   error?: string;
+  tokens?: ChatTokens;
 }
 
 export interface ChatSendResult {
@@ -123,6 +131,57 @@ export interface ChatErrorPayload {
   error: string;
 }
 
+export interface ChatTokensPayload {
+  projectRoot: string;
+  messageId: string;
+  tokens: ChatTokens;
+}
+
+export interface ModelSelection {
+  providerID: string;
+  modelID: string;
+}
+
+export interface LaraLensSettings {
+  defaultAgent: string | null;
+  defaultModel: ModelSelection | null;
+}
+
+export interface SettingsModel {
+  id: string;
+  providerID: string;
+  name: string;
+  status: string;
+  contextLimit: number;
+  outputLimit: number;
+  supportsTools: boolean;
+  supportsReasoning: boolean;
+}
+
+export interface SettingsProvider {
+  id: string;
+  name: string;
+  source: string;
+  models: SettingsModel[];
+}
+
+export interface SettingsAgent {
+  name: string;
+  description?: string;
+  mode: string;
+  builtIn: boolean;
+  color?: string;
+  model?: ModelSelection;
+}
+
+export interface SettingsOptionsResult {
+  ok: boolean;
+  settings: LaraLensSettings;
+  providers: SettingsProvider[];
+  agents: SettingsAgent[];
+  error?: string;
+}
+
 declare global {
   interface Window {
     laralens: {
@@ -130,6 +189,11 @@ declare global {
       pickDirectory: () => Promise<string | null>;
       openCodeWindow: (file: string, line?: number) => Promise<void>;
       readCodeFile: (file: string) => Promise<{ ok: boolean; content?: string; error?: string }>;
+      settings: {
+        get: () => Promise<LaraLensSettings>;
+        update: (patch: Partial<LaraLensSettings>) => Promise<LaraLensSettings>;
+        options: (projectRoot?: string | null) => Promise<SettingsOptionsResult>;
+      };
     };
     opencode: {
       getStatus: () => Promise<OpencodeStatus>;
@@ -146,6 +210,7 @@ declare global {
         onPart: (callback: (payload: ChatPartPayload) => void) => () => void;
         onDone: (callback: (payload: ChatDonePayload) => void) => () => void;
         onError: (callback: (payload: ChatErrorPayload) => void) => () => void;
+        onTokens: (callback: (payload: ChatTokensPayload) => void) => () => void;
       };
     };
   }
