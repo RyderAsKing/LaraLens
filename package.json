@@ -1,6 +1,6 @@
 {
   "name": "laralens",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "High-performance Electron desktop app that scans Laravel projects and visualizes their architecture as an interactive graph.",
   "author": "LaraLens",
   "type": "module",
@@ -24,6 +24,7 @@
     "@radix-ui/react-tooltip": "^1.2.11",
     "electron-serve": "^2.1.1",
     "electron-store": "^10.0.1",
+    "electron-updater": "^6.8.9",
     "fast-glob": "^3.3.3",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.5",

@@ -20,6 +20,10 @@ const laralens = {
   openCodeWindow: (file: string, line?: number) =>
     ipcRenderer.invoke("laralens:open-code-window", { file, line }) as Promise<void>,
 
+  /** Open an https URL in the user's default browser. Resolves false on bad input. */
+  openExternal: (url: string) =>
+    ipcRenderer.invoke("laralens:open-external", url) as Promise<boolean>,
+
   readCodeFile: (file: string) =>
     ipcRenderer.invoke("laralens:read-code-file", file) as Promise<{ ok: boolean; content?: string; error?: string }>,
 
@@ -29,6 +33,31 @@ const laralens = {
       ipcRenderer.invoke("laralens:settings:update", patch) as Promise<LaraLensSettings>,
     options: (projectRoot?: string | null) =>
       ipcRenderer.invoke("laralens:settings:options", { projectRoot }) as Promise<SettingsOptionsResult>,
+  },
+
+  /** App auto-update API. Nothing downloads or installs without an explicit call. */
+  updater: {
+    /** Manually check for an update. Resolves with the latest status. */
+    check: () =>
+      ipcRenderer.invoke("laralens:update:check") as Promise<UpdateStatus>,
+    /** Begin downloading the known update (only after `check` found one). */
+    download: () =>
+      ipcRenderer.invoke("laralens:update:download") as Promise<UpdateStatus>,
+    /** Quit and run the installer for a fully-downloaded update. */
+    install: () =>
+      ipcRenderer.invoke("laralens:update:install") as Promise<boolean>,
+    /** Read the current status without triggering a check. */
+    getState: () =>
+      ipcRenderer.invoke("laralens:update:get-state") as Promise<UpdateStatus>,
+    /** Subscribe to status broadcasts from main. Returns unsubscribe. */
+    onState: (callback: (status: UpdateStatus) => void) => {
+      const listener = (_event: IpcRendererEvent, status: UpdateStatus) =>
+        callback(status);
+      ipcRenderer.on("laralens:update:state", listener);
+      return () => {
+        ipcRenderer.off("laralens:update:state", listener);
+      };
+    },
   },
 };
 
@@ -145,6 +174,25 @@ const opencode = {
 
 export type LaraLensApi = typeof laralens;
 export type OpencodeApi = typeof opencode;
+
+export type UpdateState =
+  | "idle"
+  | "checking"
+  | "update-available"
+  | "downloading"
+  | "downloaded"
+  | "up-to-date"
+  | "unsupported"
+  | "error";
+
+export interface UpdateStatus {
+  state: UpdateState;
+  currentVersion: string;
+  version?: string;
+  releaseNotes?: string;
+  progress?: number;
+  error?: string;
+}
 
 export type ScanResult = {
   ok: boolean;

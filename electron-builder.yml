@@ -20,5 +20,15 @@ mac:
 linux:
   target:
     - AppImage
+    - deb
+    - rpm
   category: Development
-publish: null
+  maintainer: LaraLens
+publish:
+  provider: github
+  owner: RyderAsKing
+  repo: LaraLens
+  # Use the same GITHUB_TOKEN the release workflow already has; required
+  # because the repo is private-capable and to avoid anonymous rate limits.
+  # In CI this is provided automatically; locally set GH_TOKEN in env.
+  # publishAutoUpdate: true is the default, so latest*.yml are emitted.

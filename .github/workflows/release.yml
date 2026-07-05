@@ -1,0 +1,112 @@
+name: Release
+
+# Builds LaraLens desktop binaries for Windows and Linux whenever a
+# GitHub release is published, then attaches the artifacts to that release.
+#
+# Supported triggers:
+#   - release:published   -> automatic, attaches assets to the release
+#   - workflow_dispatch    -> manual run; pass the tag of an existing release
+#                              and the assets will be uploaded to it.
+#
+# Re-runs: each OS job uploads its own assets, so re-running a failed job
+# only replaces artifacts produced by that OS.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to upload assets to (e.g. v1.2.3)"
+        required: true
+        default: "v0.0.0"
+
+# `contents: write` is required for softprops/action-gh-release to upload
+# assets to a release.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || github.event.inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            npm_script: build:linux
+            artifact_name: dist-linux
+            asset_glob: |
+              dist/*.deb
+              dist/*.rpm
+              dist/*.AppImage
+              dist/*.yml
+              dist/*.blockmap
+          - os: windows-latest
+            npm_script: build:win64
+            artifact_name: dist-windows
+            asset_glob: |
+              dist/*.exe
+              dist/*.yml
+              dist/*.blockmap
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # electron-builder reads the version from package.json; align it with
+      # the release tag so produced artifacts are named LaraLens-<tag>.
+      - name: Set package version from release tag
+        shell: bash
+        run: |
+          TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "No tag resolved; keeping package.json version."
+            exit 0
+          fi
+          VERSION="${TAG#v}"
+          echo "Setting package.json version to $VERSION"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run ${{ matrix.npm_script }}
+        env:
+          # electron-builder uses GH_TOKEN when publishing; we aren't
+          # publishing from this step but the var presence avoids warnings.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Prevent Nextron/electron-builder from trying to auto-publish.
+          # We upload assets explicitly in a later step.
+          PUBLISH: "false"
+
+      # Keep the produced binaries as workflow artifacts too, so they're
+      # retrievable even if the release-upload step fails.
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.asset_glob }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Attach binaries to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          files: ${{ matrix.asset_glob }}
+          fail_on_unmatched_files: false
+          draft: false
+          prerelease: false

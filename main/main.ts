@@ -6,6 +6,7 @@ import type { Agent as OpencodeAgent, Provider as OpencodeProvider } from "@open
 import { createWindow } from "./helpers/create-window";
 import { scanProject } from "./scanner/index";
 import * as opencode from "./opencode";
+import * as updater from "./updater";
 import * as chat from "./opencode/chat";
 import * as settings from "./settings";
 import type { ChatPermissionResponse } from "./opencode/types";
@@ -55,6 +56,15 @@ if (isProd) {
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
+  });
+
+  // Open an external URL (e.g. the GitHub Releases page) in the user's
+  // default browser. Restricted to https to prevent arbitrary scheme use.
+  ipcMain.handle("laralens:open-external", async (_event, url: string) => {
+    if (typeof url !== "string" || !/^https:\/\//i.test(url)) return false;
+    const { shell } = await import("electron");
+    await shell.openExternal(url);
+    return true;
   });
 
   ipcMain.handle("laralens:read-code-file", async (_event, file: string) => {
@@ -294,6 +304,10 @@ if (isProd) {
 
   await app.whenReady();
 
+  // Register updater IPC handlers (no-op stubs in dev; full wiring in prod).
+  // Must run after whenReady because electron-updater touches app.getPath().
+  updater.initUpdater();
+
   const mainWindow = createWindow("main", {
     width: 1440,
     height: 900,
@@ -302,6 +316,9 @@ if (isProd) {
     title: "LaraLens",
     autoHideMenuBar: true,
   });
+
+  // Main window receives updater state broadcasts.
+  updater.attachWindow(mainWindow);
 
   if (isProd) {
     await mainWindow.loadURL("app://./");

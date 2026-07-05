@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bot, Cpu, Loader2, RefreshCw, Save, X } from "lucide-react";
+import { Bot, Cpu, Download, ExternalLink, Loader2, RefreshCw, RotateCcw, Save, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useUpdater } from "@/hooks/use-updater";
 import type {
   LaraLensSettings,
   ModelSelection,
@@ -32,6 +33,8 @@ export function SettingsDialog({ open, projectRoot, onClose }: SettingsDialogPro
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+
+  const updater = useUpdater();
 
   const applyOptions = useCallback((result: SettingsOptionsResult) => {
     setSettings(result.settings);
@@ -217,6 +220,8 @@ export function SettingsDialog({ open, projectRoot, onClose }: SettingsDialogPro
                 </p>
               )}
             </div>
+
+            <UpdateSection updater={updater} />
           </div>
         </div>
 
@@ -263,4 +268,103 @@ function parseModelKey(value: string): ModelSelection | null {
 
 function modelLabel(model: ModelSelection): string {
   return `${model.providerID} / ${model.modelID}`;
+}
+
+interface UpdateSectionProps {
+  updater: ReturnType<typeof useUpdater>;
+}
+
+function UpdateSection({ updater }: UpdateSectionProps) {
+  const { status, busy, check, download, install } = updater;
+  const { state, currentVersion, version, releaseNotes, progress, error } = status;
+
+  const versionLabel = currentVersion ? `v${currentVersion}` : "";
+  const updateLabel = version ? `v${version}` : "";
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-[var(--flare)]">
+        <Download className="h-4 w-4 text-[var(--aperture)]" />
+        Updates {versionLabel && <span className="text-[var(--etch)] font-normal">· installed {versionLabel}</span>}
+      </div>
+
+      {/* Status line */}
+      <div className="mb-3 text-xs text-[var(--etch)]">
+        {state === "idle" && "No update check has been run yet in this session."}
+        {state === "checking" && "Checking for updates…"}
+        {state === "up-to-date" && (
+          <span className="text-emerald-300">You&apos;re on the latest version{versionLabel ? ` (${versionLabel})` : ""}.</span>
+        )}
+        {state === "update-available" && updateLabel && (
+          <span className="text-[var(--flare)]">An update to {updateLabel} is available.</span>
+        )}
+        {state === "downloading" && updateLabel && (
+          <span className="text-[var(--flare)]">Downloading {updateLabel}… {progress ?? 0}%</span>
+        )}
+        {state === "downloaded" && updateLabel && (
+          <span className="text-emerald-300">{updateLabel} is ready to install.</span>
+        )}
+        {state === "error" && <span className="text-amber-200">{error ?? "Update check failed."}</span>}
+        {state === "unsupported" && (
+          <span className="text-amber-200">{error ?? "Auto-update isn't supported for this install."}</span>
+        )}
+      </div>
+
+      {/* Progress bar while downloading */}
+      {(state === "downloading") && (
+        <div className="mb-3 h-1.5 w-full overflow-hidden rounded bg-[var(--chassis)]">
+          <div
+            className="h-full bg-[var(--aperture)] transition-[width] duration-200"
+            style={{ width: `${Math.max(0, Math.min(100, progress ?? 0))}%` }}
+          />
+        </div>
+      )}
+
+      {/* Release notes (markdown body) when an update is available or downloaded */}
+      {releaseNotes && (state === "update-available" || state === "downloading" || state === "downloaded") && (
+        <div className="mb-3 max-h-32 overflow-y-auto rounded-md border border-[var(--chassis)] bg-black/20 p-2 text-xs text-[var(--etch)] whitespace-pre-wrap">
+          {releaseNotes}
+        </div>
+      )}
+
+      {/* Action buttons — every transition requires an explicit click */}
+      <div className="flex flex-wrap items-center gap-2">
+        {(state === "idle" || state === "up-to-date" || state === "error") && (
+          <Button variant="outline" size="sm" onClick={check} disabled={busy}>
+            {busy ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            Check for updates
+          </Button>
+        )}
+        {state === "unsupported" && (
+          <Button variant="outline" size="sm" onClick={() => window.laralens.openExternal("https://github.com/RyderAsKing/LaraLens/releases")}>
+            <ExternalLink />
+            Open GitHub Releases
+          </Button>
+        )}
+        {state === "update-available" && (
+          <>
+            <Button size="sm" onClick={download} disabled={busy}>
+              {busy ? <Loader2 className="animate-spin" /> : <Download />}
+              Download {updateLabel}
+            </Button>
+            <Button variant="outline" size="sm" onClick={check} disabled={busy}>
+              Check again
+            </Button>
+          </>
+        )}
+        {state === "downloading" && (
+          <Button size="sm" disabled>
+            <Loader2 className="animate-spin" />
+            Downloading {progress ?? 0}%
+          </Button>
+        )}
+        {state === "downloaded" && (
+          <Button size="sm" onClick={install} disabled={busy}>
+            {busy ? <Loader2 className="animate-spin" /> : <RotateCcw />}
+            Install &amp; restart
+          </Button>
+        )}
+      </div>
+    </div>
+  );
 }

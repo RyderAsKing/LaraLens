@@ -182,17 +182,44 @@ export interface SettingsOptionsResult {
   error?: string;
 }
 
+export type UpdateState =
+  | "idle"
+  | "checking"
+  | "update-available"
+  | "downloading"
+  | "downloaded"
+  | "up-to-date"
+  | "unsupported"
+  | "error";
+
+export interface UpdateStatus {
+  state: UpdateState;
+  currentVersion: string;
+  version?: string;
+  releaseNotes?: string;
+  progress?: number;
+  error?: string;
+}
+
 declare global {
   interface Window {
     laralens: {
       scan: (projectPath: string) => Promise<ScanResult>;
       pickDirectory: () => Promise<string | null>;
       openCodeWindow: (file: string, line?: number) => Promise<void>;
+      openExternal: (url: string) => Promise<boolean>;
       readCodeFile: (file: string) => Promise<{ ok: boolean; content?: string; error?: string }>;
       settings: {
         get: () => Promise<LaraLensSettings>;
         update: (patch: Partial<LaraLensSettings>) => Promise<LaraLensSettings>;
         options: (projectRoot?: string | null) => Promise<SettingsOptionsResult>;
+      };
+      updater: {
+        check: () => Promise<UpdateStatus>;
+        download: () => Promise<UpdateStatus>;
+        install: () => Promise<boolean>;
+        getState: () => Promise<UpdateStatus>;
+        onState: (callback: (status: UpdateStatus) => void) => () => void;
       };
     };
     opencode: {
