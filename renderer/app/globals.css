@@ -171,6 +171,7 @@
   --animate-settings-pop-in: settings-pop-in 0.18s ease-out;
   --animate-panel-fade-in: panel-fade-in 0.2s ease-out;
   --animate-pill-active-pulse: pill-active-pulse 2s ease-in-out infinite;
+  --animate-pill-label-in: pill-label-in 0.28s ease-out both;
   --animate-composer-bubble-in: composer-bubble-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
   --animate-composer-float: composer-float 4.5s ease-in-out infinite;
 }
@@ -508,5 +509,20 @@
   }
   50% {
     box-shadow: 0 6px 22px rgba(0, 0, 0, 0.28), 0 0 0 2px rgba(255, 255, 255, 0.16);
+  }
+}
+
+/* Entrance animation for the collapsed pill's status label. Triggered by
+   remounting the label via a `key` prop whenever the activity text changes,
+   so the swap reads as a soft fade + slight upward drift instead of an
+   instant snap. Keeps the shimmer gradient on the inner text intact. */
+@keyframes pill-label-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
