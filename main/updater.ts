@@ -1,6 +1,22 @@
 import { app, ipcMain, type BrowserWindow } from "electron";
-import { autoUpdater } from "electron-updater";
+import electronUpdater from "electron-updater";
 import type { UpdateInfo, ProgressInfo } from "builder-util-runtime";
+
+type AutoUpdater = {
+  autoDownload: boolean;
+  autoInstallOnAppQuit: boolean;
+  checkForUpdates(): Promise<unknown>;
+  downloadUpdate(): Promise<unknown>;
+  quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
+  on(event: "checking-for-update", listener: () => void): void;
+  on(event: "update-available", listener: (info: UpdateInfo) => void): void;
+  on(event: "update-not-available", listener: () => void): void;
+  on(event: "download-progress", listener: (progress: ProgressInfo) => void): void;
+  on(event: "update-downloaded", listener: () => void): void;
+  on(event: "error", listener: (error: Error) => void): void;
+};
+
+const { autoUpdater } = electronUpdater as { autoUpdater: AutoUpdater };
 
 /**
  * LaraLens auto-updater.
