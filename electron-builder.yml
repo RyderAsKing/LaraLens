@@ -10,14 +10,20 @@ files:
       - package.json
       - app
 asar: true
+extraResources:
+  - from: resources/icon.png
+    to: icon.png
 win:
+  icon: resources/icon.ico
   target:
     - nsis
 mac:
+  icon: resources/icon.icns
   target:
     - dmg
     - zip
 linux:
+  icon: resources/icon.png
   target:
     - AppImage
     - deb

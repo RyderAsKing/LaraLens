@@ -1,5 +1,5 @@
 import path from "node:path";
-import { BrowserWindow, BrowserWindowConstructorOptions } from "electron";
+import { app, BrowserWindow, BrowserWindowConstructorOptions } from "electron";
 import Store from "electron-store";
 
 interface WindowState {
@@ -14,6 +14,10 @@ export function createWindow(
   name: string,
   options: BrowserWindowConstructorOptions
 ): BrowserWindow {
+  const appIcon = app.isPackaged
+    ? path.join(process.resourcesPath, "icon.png")
+    : path.join(process.cwd(), "resources", "icon.png");
+
   const store = new Store<WindowState>({
     name: `window-state-${name}`,
     defaults: {
@@ -24,6 +28,7 @@ export function createWindow(
   const state = store.store;
   const window = new BrowserWindow({
     ...options,
+    icon: options.icon ?? appIcon,
     x: state.x,
     y: state.y,
     width: state.width,

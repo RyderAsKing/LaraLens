@@ -1,6 +1,6 @@
 "use client";
 
-import { FolderOpen, AlertCircle, Clock3, Search } from "lucide-react";
+import { FolderOpen, AlertCircle, Clock3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export interface RecentProject {
@@ -141,7 +141,14 @@ function LensSweep({ icon = "lens" }: { icon?: "lens" | "search" }) {
   return (
     <div className={`${isSearch ? "search-mark" : "lens-sweep"} h-16 w-16`}>
       <div className="lens-sweep-inner flex h-full w-full items-center justify-center">
-        <Search className="h-7 w-7 text-[var(--aperture)]" />
+        <span
+          aria-hidden="true"
+          className="h-7 w-7 bg-[var(--aperture)]"
+          style={{
+            WebkitMask: "url('/Lens.svg') center / contain no-repeat",
+            mask: "url('/Lens.svg') center / contain no-repeat",
+          }}
+        />
       </div>
     </div>
   );

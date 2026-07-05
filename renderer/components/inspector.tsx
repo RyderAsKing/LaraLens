@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, ExternalLink, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ACCENT_COLORS, TYPE_LABELS } from "@/lib/graph";
@@ -56,7 +56,14 @@ export function Inspector({ graph, selectedId, summary }: InspectorProps) {
         <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
           <div className="search-mark h-10 w-10">
             <div className="lens-sweep-inner flex h-full w-full items-center justify-center">
-              <Search className="h-[18px] w-[18px] text-[var(--aperture)]" />
+              <span
+                aria-hidden="true"
+                className="h-[18px] w-[18px] bg-[var(--aperture)]"
+                style={{
+                  WebkitMask: "url('/Lens.svg') center / contain no-repeat",
+                  mask: "url('/Lens.svg') center / contain no-repeat",
+                }}
+              />
             </div>
           </div>
           <p className="mt-3 text-sm text-[var(--etch)]">
