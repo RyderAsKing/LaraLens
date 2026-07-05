@@ -166,10 +166,9 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
         if (part.type === "tool") {
           const st = part.state;
           if (st.status === "pending" || st.status === "running") {
-            const subtitle = getToolSubtitle(part);
             return {
               kind: "tool",
-              label: subtitle || capitalize(part.tool),
+              label: capitalize(part.tool),
               Icon: getToolIcon(part.tool),
             };
           }
@@ -193,6 +192,68 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
     }
     return null;
   }, [messages, isStreaming]);
+
+  // Minimum time a pill status label stays visible before a newer label can
+  // replace it. Tool inputs (e.g. bash command, file content) can stream in
+  // frame-by-frame, which makes the label flicker too fast to read. Holding
+  // each distinct label for at least this long smooths the chatter. When the
+  // turn finishes (activity -> null) the pill updates instantly so the
+  // "Continue"/"Ask anything..." state appears without delay.
+  const MIN_PILL_LABEL_HOLD_MS = 200;
+  const [displayedActivity, setDisplayedActivity] =
+    useState<ChatActivity | null>(null);
+  const labelSetAtRef = useRef(0);
+  const pendingPillTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+
+  useEffect(() => {
+    // Cancel any deferred swap — we recompute below for the latest activity.
+    if (pendingPillTimeoutRef.current) {
+      clearTimeout(pendingPillTimeoutRef.current);
+      pendingPillTimeoutRef.current = null;
+    }
+
+    // Turn finished (or never started) — show the idle state right away.
+    if (!activity) {
+      setDisplayedActivity(null);
+      labelSetAtRef.current = 0;
+      return;
+    }
+
+    // Same label + icon as what's already shown — nothing to do.
+    if (
+      displayedActivity &&
+      activity.label === displayedActivity.label &&
+      activity.kind === displayedActivity.kind &&
+      activity.Icon === displayedActivity.Icon
+    ) {
+      return;
+    }
+
+    const elapsed = labelSetAtRef.current
+      ? Date.now() - labelSetAtRef.current
+      : MIN_PILL_LABEL_HOLD_MS;
+    const remaining = MIN_PILL_LABEL_HOLD_MS - elapsed;
+
+    if (remaining <= 0) {
+      setDisplayedActivity(activity);
+      labelSetAtRef.current = Date.now();
+    } else {
+      pendingPillTimeoutRef.current = setTimeout(() => {
+        pendingPillTimeoutRef.current = null;
+        setDisplayedActivity(activity);
+        labelSetAtRef.current = Date.now();
+      }, remaining);
+    }
+  }, [activity, displayedActivity]);
+
+  // Drop any pending swap on unmount so we don't setState after teardown.
+  useEffect(() => {
+    return () => {
+      if (pendingPillTimeoutRef.current) clearTimeout(pendingPillTimeoutRef.current);
+    };
+  }, []);
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || isStreaming || submitting || !enabled) return;
@@ -301,7 +362,7 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
             open
               ? hasStartedConversation
                 ? "h-[calc(100dvh-2rem)] w-[min(1100px,calc(100vw-2rem))] rounded-2xl border border-[var(--chassis)] bg-[var(--optic)] shadow-2xl"
-                : "h-14 w-[min(768px,calc(100vw-2rem))] rounded-[1.75rem] border border-[var(--chassis)] bg-[var(--void)]/95 shadow-xl shadow-black/20 backdrop-blur supports-[backdrop-filter]:bg-[var(--void)]/80"
+                : "min-h-14 w-[min(768px,calc(100vw-2rem))] rounded-[1.75rem] border border-[var(--chassis)] bg-[var(--void)]/95 shadow-xl shadow-black/20 backdrop-blur supports-[backdrop-filter]:bg-[var(--void)]/80"
               : "h-11 w-48 rounded-[22px] bg-[var(--aperture)] shadow-lg"
           )}
         >
@@ -317,23 +378,31 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
               open ? "pointer-events-none opacity-0" : "opacity-100 hover:brightness-110"
             )}
           >
-            {activity ? (
+            {displayedActivity ? (
               <>
-                <activity.Icon
+                <displayedActivity.Icon
                   className={cn(
                     "h-4 w-4 shrink-0",
-                    activity.kind === "working" && "animate-spin",
-                    activity.kind === "thinking" && "animate-pulse"
+                    displayedActivity.kind === "working" && "animate-spin",
+                    displayedActivity.kind === "thinking" && "animate-pulse"
                   )}
                 />
+                {/* Wrapper remounts on label change (via key) so the entrance
+                    animation replays, giving a soft fade+rise instead of an
+                    instant text snap. The inner span keeps the shimmer gradient. */}
                 <span
-                  className="max-w-[14ch] truncate bg-[length:200%_auto] bg-clip-text text-transparent animate-[shimmer_2.5s_linear_infinite]"
-                  style={{
-                    backgroundImage:
-                      "linear-gradient(to right, rgba(255,255,255,0.55) 35%, #fff 50%, rgba(255,255,255,0.55) 65%)",
-                  }}
+                  key={displayedActivity.label}
+                  className="animate-pill-label-in"
                 >
-                  {activity.label}
+                  <span
+                    className="max-w-[14ch] truncate bg-[length:200%_auto] bg-clip-text text-transparent animate-[shimmer_2.5s_linear_infinite]"
+                    style={{
+                      backgroundImage:
+                        "linear-gradient(to right, rgba(255,255,255,0.55) 35%, #fff 50%, rgba(255,255,255,0.55) 65%)",
+                    }}
+                  >
+                    {displayedActivity.label}
+                  </span>
                 </span>
               </>
             ) : hasStartedConversation ? (
@@ -350,16 +419,17 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
           </button>
 
           {/* Empty composer layer — the input the pill morphs into.
-              Anchored to the bottom at a fixed h-14 (instead of inset-0) so
-              that when the container morphs to the full conversation panel the
-              input stays at its natural size at the bottom and crossfades with
-              the panel's floating input, rather than stretching to fill the
-              growing container. */}
+              Kept in normal flow (relative, not absolute) so the morphing
+              container can grow upward with the textarea as it auto-expands.
+              When the container morphs to the full conversation panel, this
+              layer crossfades out while the panel's floating input fades in. */}
           <div
             ref={composerLayerRef}
             className={cn(
-              "absolute inset-x-0 bottom-0 h-14 transition-opacity duration-200",
-              open && !hasStartedConversation ? "opacity-100" : "pointer-events-none opacity-0"
+              "transition-opacity duration-200",
+              open && !hasStartedConversation
+                ? "relative opacity-100"
+                : "absolute inset-x-0 bottom-0 pointer-events-none opacity-0"
             )}
           >
             <PromptInput
@@ -367,9 +437,9 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
               onValueChange={setInput}
               onSubmit={handleSend}
               isLoading={isStreaming}
-              maxHeight={40}
+              maxHeight={160}
               disabled={!enabled}
-              className="flex h-full w-full items-end gap-3 rounded-[1.75rem] border-0 bg-transparent py-2 pl-5 pr-2 shadow-none"
+              className="flex min-h-14 w-full items-end gap-3 rounded-[1.75rem] border-0 bg-transparent py-2 pl-5 pr-2 shadow-none"
             >
               <PromptInputTextarea
                 placeholder="Ask anything..."
