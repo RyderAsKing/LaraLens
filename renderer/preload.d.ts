@@ -204,7 +204,7 @@ declare global {
       chat: {
         send: (projectRoot: string, text: string) => Promise<ChatSendResult>;
         history: (projectRoot: string) => Promise<ChatMessage[]>;
-        clear: (projectRoot: string) => Promise<{ ok: boolean }>;
+        clear: (projectRoot: string) => Promise<{ ok: boolean; error?: string }>;
         abort: (projectRoot: string) => Promise<ChatAbortResult>;
         replyPermission: (projectRoot: string, permissionID: string, response: ChatPermissionResponse) => Promise<{ ok: boolean; error?: string }>;
         onPart: (callback: (payload: ChatPartPayload) => void) => () => void;

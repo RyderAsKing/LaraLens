@@ -81,9 +81,12 @@ const opencode = {
     history: (projectRoot: string) =>
       ipcRenderer.invoke("opencode:chat:history", projectRoot) as Promise<ChatMessage[]>,
 
-    /** Clear the conversation history for a project. */
+    /** Clear the conversation history for a project and start a fresh session. */
     clear: (projectRoot: string) =>
-      ipcRenderer.invoke("opencode:chat:clear", projectRoot) as Promise<{ ok: boolean }>,
+      ipcRenderer.invoke("opencode:chat:clear", projectRoot) as Promise<{
+        ok: boolean;
+        error?: string;
+      }>,
 
     /** Abort the current streaming response. */
     abort: (projectRoot: string) =>

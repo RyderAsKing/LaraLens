@@ -373,10 +373,51 @@ export function history(projectRoot: string): ChatMessage[] {
   return sessions.get(projectRoot)?.messages ?? [];
 }
 
-/** Clear the conversation history for a project (keeps the OpenCode session). */
-export function clear(projectRoot: string): void {
+/**
+ * Clear the conversation history for a project and invalidate the OpenCode
+ * session so the next prompt creates a brand-new server-side session.
+ *
+ * The current OpenCode session is deleted on the server (best-effort). Local
+ * state is then reset and `opencodeSessionId` is emptied, which makes `send()`
+ * lazily create a fresh session on the next prompt.
+ */
+export async function clear(
+  projectRoot: string
+): Promise<{ ok: boolean; error?: string }> {
   const chatSession = sessions.get(projectRoot);
-  if (!chatSession) return;
+  if (!chatSession) return { ok: true };
+
+  // If this project is the one actively streaming, stop the stream first so
+  // we don't race with in-flight events for the session we're about to delete.
+  if (activeStreamDirectory === projectRoot) {
+    stopStream();
+  }
+
+  const sessionId = chatSession.opencodeSessionId;
+
+  // Delete the server-side session best-effort. Failures (e.g. server gone,
+  // session already removed) are non-fatal — we still reset locally so the
+  // next prompt creates a fresh session.
+  if (client && sessionId) {
+    try {
+      const result = await client.session.delete({ path: { id: sessionId } });
+      if (result.error) {
+        chatLog("clear: session.delete returned error", {
+          sessionId,
+          error: describeSdkError(result.error),
+        });
+      }
+    } catch (err) {
+      chatLog("clear: session.delete threw", {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // Reset local conversation state + invalidate the server session id. With
+  // `opencodeSessionId` empty, `send()` will create a new OpenCode session on
+  // the next prompt (see the branch at send() line ~172).
   chatSession.messages = [];
   chatSession.pendingAssistantLocalId = null;
   chatSession.opencodeToLocal.clear();
@@ -385,6 +426,11 @@ export function clear(projectRoot: string): void {
   chatSession.assistantIdsWithObservedBusy.clear();
   chatSession.pendingPartTextByMessageId.clear();
   delete chatSession.resolvedModel;
+  chatSession.opencodeSessionId = "";
+  if (sessionId) sessionToProject.delete(sessionId);
+  projectsWithSendInProgress.delete(projectRoot);
+
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------

@@ -251,8 +251,7 @@ if (isProd) {
   ipcMain.handle(
     "opencode:chat:clear",
     async (_event, projectRoot: string) => {
-      chat.clear(projectRoot);
-      return { ok: true };
+      return chat.clear(projectRoot);
     }
   );
 
