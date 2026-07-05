@@ -295,6 +295,20 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
     };
   }, [open, hasStartedConversation]);
 
+  // Escape also collapses the conversation panel back to the pill, mirroring
+  // the empty-composer behavior so the chat can be dismissed at any time.
+  useEffect(() => {
+    if (!open || !hasStartedConversation) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, hasStartedConversation]);
+
   // Disabled pill — render but greyed out.
   if (!enabled && !open) {
     return (
