@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Bot, Cpu, Download, ExternalLink, Loader2, RefreshCw, RotateCcw, Save, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Markdown } from "@/components/ui/markdown";
 import { useUpdater } from "@/hooks/use-updater";
 import type {
   LaraLensSettings,
@@ -322,8 +323,8 @@ function UpdateSection({ updater }: UpdateSectionProps) {
 
       {/* Release notes (markdown body) when an update is available or downloaded */}
       {releaseNotes && (state === "update-available" || state === "downloading" || state === "downloaded") && (
-        <div className="mb-3 max-h-32 overflow-y-auto rounded-md border border-[var(--chassis)] bg-black/20 p-2 text-xs text-[var(--etch)] whitespace-pre-wrap">
-          {releaseNotes}
+        <div className="mb-3 max-h-32 overflow-y-auto rounded-md border border-[var(--chassis)] bg-black/20 p-2 text-xs text-[var(--etch)] [&_a]:break-words [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1">
+          <Markdown>{releaseNotes}</Markdown>
         </div>
       )}
 

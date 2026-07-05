@@ -17,6 +17,14 @@ win:
   icon: resources/icon.ico
   target:
     - nsis
+  # GitHub's release-asset download URLs convert spaces in the filename to
+  # dots, but electron-updater requests the URL literally from latest.yml.
+  # If the installer keeps its default name ("LaraLens Setup 1.0.x.exe"),
+  # the URL space becomes %20 and 404s. Pin the NSIS artifact name to a
+  # dot-joined form so the on-disk file, the latest.yml entry, and the
+  # GitHub download URL all match exactly.
+nsis:
+  artifactName: "LaraLens.Setup.${version}.${ext}"
 mac:
   icon: resources/icon.icns
   target:
