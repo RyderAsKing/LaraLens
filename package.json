@@ -1,6 +1,6 @@
 {
   "name": "laralens",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "High-performance Electron desktop app that scans Laravel projects and visualizes their architecture as an interactive graph.",
   "author": "LaraLens",
   "type": "module",
