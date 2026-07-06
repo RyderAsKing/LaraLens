@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Toolbar, type FeatureMode } from "@/components/toolbar";
 import { Inspector } from "@/components/inspector";
 import { RouteBrowser, type RouteViewMode } from "@/components/route-browser";
@@ -10,6 +10,7 @@ import { EmptyState, type RecentProject } from "@/components/empty-state";
 import { ChatComposer } from "@/components/chat-composer";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { useScan } from "@/hooks/use-scan";
+import { displayHttpMethod, TYPE_LABELS } from "@/lib/graph";
 
 const RECENT_PROJECTS_KEY = "laralens:recent-projects";
 
@@ -34,6 +35,48 @@ export default function Page() {
 
   const graph = result?.graph ?? null;
   const summary = result?.summary ?? null;
+
+  // Compute route + node context for the chat composer.
+  // Non-null when:
+  //   (a) the user is inside a specific route detail page (selectedRouteId set), or
+  //   (b) the user is browsing a non-root route folder (browsePath !== "/")
+  const routeContext = useMemo(() => {
+    if (featureMode !== "routes") return null;
+
+    // --- Case A: specific route detail page ---
+    if (selectedRouteId && graph) {
+      const route = graph.nodes.find((n) => n.id === selectedRouteId);
+      if (!route) return null;
+
+      const selectedNode = selectedId
+        ? graph.nodes.find((n) => n.id === selectedId) ?? null
+        : null;
+
+      return {
+        kind: "route" as const,
+        routeMethod: displayHttpMethod(route.data.method as string),
+        routeUri: String(route.data.uri ?? ""),
+        routeName: route.data.name ? String(route.data.name) : undefined,
+        selectedNode: selectedNode
+          ? {
+              type: selectedNode.type,
+              label: selectedNode.label,
+              typeLabel: TYPE_LABELS[selectedNode.type] ?? selectedNode.type,
+            }
+          : null,
+      };
+    }
+
+    // --- Case B: browsing a non-root route folder ---
+    if (!selectedRouteId && browsePath !== "/") {
+      return {
+        kind: "folder" as const,
+        browsePath,
+      };
+    }
+
+    return null;
+  }, [featureMode, selectedRouteId, selectedId, browsePath, graph]);
 
   useEffect(() => {
     try {
@@ -182,7 +225,7 @@ export default function Page() {
         </div>
       )}
 
-      <ChatComposer projectRoot={projectPath} />
+      <ChatComposer projectRoot={projectPath} routeContext={routeContext} />
       <SettingsDialog
         open={settingsOpen}
         projectRoot={projectPath}

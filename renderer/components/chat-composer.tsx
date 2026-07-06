@@ -25,6 +25,7 @@ import {
   FileText,
   Brain,
   Info,
+  Navigation,
 } from "lucide-react";
 import { useOpencode } from "@/hooks/use-opencode";
 import { useOpencodeChat } from "@/hooks/use-opencode-chat";
@@ -52,8 +53,26 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 
+export type RouteContext =
+  | {
+      kind: "route";
+      routeMethod: string;
+      routeUri: string;
+      routeName?: string;
+      selectedNode?: {
+        type: string;
+        label: string;
+        typeLabel: string;
+      } | null;
+    }
+  | {
+      kind: "folder";
+      browsePath: string;
+    };
+
 interface ChatComposerProps {
   projectRoot: string | null;
+  routeContext?: RouteContext | null;
 }
 
 function formatTokens(n: number): string {
@@ -79,7 +98,7 @@ type ChatActivity = {
  * Design follows the opencode chat UI: no avatars, user messages as
  * right-aligned bubbles, assistant messages as full-width stacked parts.
  */
-export function ChatComposer({ projectRoot }: ChatComposerProps) {
+export function ChatComposer({ projectRoot, routeContext = null }: ChatComposerProps) {
   const { status } = useOpencode();
   const {
     messages,
@@ -97,6 +116,8 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
   const [input, setInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [settings, setSettings] = useState<LaraLensSettings | null>(null);
+  const [contextAware, setContextAware] = useState(false);
+  const lastSentContextRef = useRef<string | null>(null);
   // Deferred mount of the heavy conversation subtree (messages list,
   // StickToBottom observer, floating PromptInput). Rendering it synchronously
   // while the container morphs causes layout thrash that freezes the morph
@@ -257,13 +278,33 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || isStreaming || submitting || !enabled) return;
-    const text = input;
+    let text = input;
+    // Prepend route/node context when enabled and we have context to share.
+    if (contextAware && routeContext) {
+      let contextStr: string;
+      if (routeContext.kind === "route") {
+        const routePart = `The user is currently looking at the ${routeContext.routeMethod} ${routeContext.routeUri} route${
+          routeContext.routeName ? ` (named ${routeContext.routeName})` : ""
+        }.`;
+        const nodePart = routeContext.selectedNode
+          ? ` The user is currently looking at the ${routeContext.selectedNode.label} (${routeContext.selectedNode.typeLabel}) node within this route.`
+          : "";
+        contextStr = `${routePart}${nodePart}`;
+      } else {
+        contextStr = `The user is currently browsing the ${routeContext.browsePath} route group.`;
+      }
+      
+      if (contextStr !== lastSentContextRef.current) {
+        text = `[Context: ${contextStr}]\n\n${input}`;
+        lastSentContextRef.current = contextStr;
+      }
+    }
     setSubmitting(true);
     const sent = await send(text);
     setSubmitting(false);
     if (!sent) return;
     setInput("");
-  }, [input, isStreaming, submitting, enabled, send]);
+  }, [input, isStreaming, submitting, enabled, send, contextAware, routeContext]);
 
   const handlePreset = useCallback(
     (prompt: string) => {
@@ -457,9 +498,25 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
             >
               <PromptInputTextarea
                 placeholder="Ask anything..."
-                className="min-h-10 flex-1 overflow-y-auto px-0 py-2 leading-6 text-[var(--flare)] placeholder:text-[var(--etch)]"
+                className="min-w-[120px] min-h-10 flex-1 overflow-y-auto px-0 py-2 leading-6 text-[var(--flare)] placeholder:text-[var(--etch)]"
               />
               <PromptInputActions className="ml-auto shrink-0">
+                {/* Context-aware toggle */}
+                {routeContext && (
+                  <PromptInputAction tooltip="The current open route shall be sent as context">
+                    <button
+                      onClick={(e) => { e.preventDefault(); setContextAware((v) => !v); }}
+                      className={cn(
+                        "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition-colors",
+                        contextAware
+                          ? "border-[var(--aperture)]/30 bg-[var(--aperture)]/10 text-[var(--flare)]"
+                          : "border-transparent text-[var(--etch)] hover:text-[var(--flare)]"
+                      )}
+                    >
+                      <Navigation className="h-3.5 w-3.5" />
+                    </button>
+                  </PromptInputAction>
+                )}
                 {isStreaming ? (
                   <PromptInputAction tooltip="Stop">
                     <button
@@ -515,7 +572,10 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
                 </div>
                 <div className="flex items-center gap-1">
                   <button
-                    onClick={clear}
+                    onClick={() => {
+                      clear();
+                      lastSentContextRef.current = null;
+                    }}
                     disabled={messages.length === 0 || isStreaming}
                     title="Clear conversation"
                     className="rounded p-1.5 text-[var(--etch)] transition-colors hover:bg-[var(--void)] hover:text-[var(--flare)] disabled:opacity-30"
@@ -574,9 +634,25 @@ export function ChatComposer({ projectRoot }: ChatComposerProps) {
                 >
                   <PromptInputTextarea
                     placeholder="Ask anything..."
-                    className="min-h-10 flex-1 overflow-y-auto px-0 py-2 leading-6 text-[var(--flare)] placeholder:text-[var(--etch)]"
+                    className="min-w-[120px] min-h-10 flex-1 overflow-y-auto px-0 py-2 leading-6 text-[var(--flare)] placeholder:text-[var(--etch)]"
                   />
                   <PromptInputActions className="ml-auto shrink-0">
+                    {/* Context-aware toggle */}
+                    {routeContext && (
+                      <PromptInputAction tooltip="The current open route shall be sent as context">
+                        <button
+                          onClick={(e) => { e.preventDefault(); setContextAware((v) => !v); }}
+                          className={cn(
+                            "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition-colors",
+                            contextAware
+                              ? "border-[var(--aperture)]/30 bg-[var(--aperture)]/10 text-[var(--flare)]"
+                              : "border-transparent text-[var(--etch)] hover:text-[var(--flare)]"
+                          )}
+                        >
+                          <Navigation className="h-3.5 w-3.5" />
+                        </button>
+                      </PromptInputAction>
+                    )}
                     {isStreaming ? (
                       <PromptInputAction tooltip="Stop">
                         <button
