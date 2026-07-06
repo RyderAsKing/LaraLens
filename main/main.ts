@@ -1,4 +1,4 @@
-﻿import path from "node:path";
+import path from "node:path";
 import fs from "node:fs/promises";
 import { app, ipcMain, BrowserWindow } from "electron";
 import serve from "electron-serve";
@@ -13,6 +13,10 @@ import type { ChatPermissionResponse } from "./opencode/types";
 
 const isProd = process.env.NODE_ENV === "production";
 let currentProjectRoot: string | null = null;
+
+if (!isProd) {
+  app.commandLine.appendSwitch("no-sandbox");
+}
 
 if (isProd) {
   serve({ directory: "app" });
