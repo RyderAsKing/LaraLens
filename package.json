@@ -7,7 +7,7 @@
   "main": "app/main.js",
   "private": true,
   "scripts": {
-    "dev": "nextron",
+    "dev": "nextron --electron-options=\"--no-sandbox\"",
     "build": "nextron build",
     "build:win32": "nextron build --win --ia32",
     "build:win64": "nextron build --win --x64",

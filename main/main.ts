@@ -14,10 +14,6 @@ import type { ChatPermissionResponse } from "./opencode/types";
 const isProd = process.env.NODE_ENV === "production";
 let currentProjectRoot: string | null = null;
 
-if (!isProd) {
-  app.commandLine.appendSwitch("no-sandbox");
-}
-
 if (isProd) {
   serve({ directory: "app" });
 }
