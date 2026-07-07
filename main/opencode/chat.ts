@@ -25,8 +25,9 @@
 
 import { randomUUID } from "node:crypto";
 import type { OpencodeClient, Event, Part, Message, Permission } from "@opencode-ai/sdk";
-import type { ChatMessage, ChatPart, ChatToolState, ChatPermissionResponse, ChatTokens } from "./types";
+import type { ChatMessage, ChatPart, ChatToolState, ChatPermissionResponse, ChatTokens, ChatSessionMeta } from "./types";
 import { getSettings } from "../settings";
+import * as persistence from "./persistence";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -35,6 +36,17 @@ import { getSettings } from "../settings";
 interface ChatSession {
   /** OpenCode session ID (empty string = not yet created / invalidated). */
   opencodeSessionId: string;
+  /**
+   * Whether `opencodeSessionId` has been confirmed alive on the current
+   * server connection. False on load (we have not verified yet), after a
+   * disconnect, and until the first successful verification in `send`.
+   * When true, `send` skips the verification round-trip and reuses the id.
+   */
+  opencodeSessionVerified: boolean;
+  /** Local DB session id (null = not yet persisted / fresh conversation). */
+  sessionId: string | null;
+  /** Auto-generated title from first user message (null until first send). */
+  title: string | null;
   /** Local conversation history (user + assistant messages interleaved). */
   messages: ChatMessage[];
   /** Local UUID of the assistant message we're waiting to stream (pre-mapping). */
@@ -88,6 +100,87 @@ function chatLog(message: string, details?: Record<string, unknown>): void {
 }
 
 // ---------------------------------------------------------------------------
+// Persistence helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive a short, human-readable title from the first user prompt. Collapses
+ * whitespace and truncates so the sessions list stays scannable.
+ */
+function titleFromPrompt(text: string): string {
+  const trimmed = text.trim().replace(/\s+/g, " ");
+  if (trimmed.length <= 60) return trimmed || "New conversation";
+  return trimmed.slice(0, 57) + "...";
+}
+
+/**
+ * Run a persistence mutation, swallowing and logging any error so a DB issue
+ * never breaks the live chat. The in-memory session remains the source of
+ * truth for the active conversation; persistence is best-effort.
+ */
+function safePersist(label: string, fn: () => void): void {
+  try {
+    fn();
+  } catch (err) {
+    chatLog("persistence error", {
+      label,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/** Create a DB session row, returning the new id or null on failure. */
+function persistCreateSession(projectRoot: string, title: string): string | null {
+  try {
+    return persistence.createSession(projectRoot, title);
+  } catch (err) {
+    chatLog("persistence error", {
+      label: "createSession",
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/** Upsert a message row at its current index in the session's messages array. */
+function persistMessageAt(chatSession: ChatSession, msg: ChatMessage, sortOrder: number): void {
+  if (!chatSession.sessionId) return;
+  safePersist("saveMessage", () =>
+    persistence.saveMessage(chatSession.sessionId!, sortOrder, msg)
+  );
+}
+
+/** Update a settled message's mutable fields and bump the session's ts. */
+function persistMessageUpdate(chatSession: ChatSession, msg: ChatMessage): void {
+  if (!chatSession.sessionId) return;
+  safePersist("updateMessage", () =>
+    persistence.updateMessage(chatSession.sessionId!, msg)
+  );
+  safePersist("touchSession", () => persistence.touchSession(chatSession.sessionId!));
+}
+
+/**
+ * Mark any in-flight assistant messages as complete with whatever content
+ * streamed so far, and persist them. Used when a conversation is abandoned
+ * mid-stream (new conversation, load another session, app quit) so the DB
+ * doesn't retain a forever-pending bubble.
+ */
+function finalizeInflightMessages(chatSession: ChatSession): void {
+  for (const message of chatSession.messages) {
+    if (
+      message.role === "assistant" &&
+      (message.status === "pending" || message.status === "streaming")
+    ) {
+      message.status = "complete";
+      persistMessageUpdate(chatSession, message);
+      chatSession.assistantToUserMessageId.delete(message.id);
+      chatSession.assistantIdsWithObservedBusy.delete(message.id);
+    }
+  }
+  chatSession.pendingAssistantLocalId = null;
+}
+
+// ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
 
@@ -112,6 +205,7 @@ export function setClient(next: OpencodeClient | null): void {
     for (const session of sessions.values()) {
       markInflightMessagesError(session, "OpenCode server disconnected.");
       session.opencodeSessionId = "";
+      session.opencodeSessionVerified = false;
       session.opencodeToLocal.clear();
       session.ignoredOpencodeMessageIds.clear();
       session.assistantToUserMessageId.clear();
@@ -123,6 +217,13 @@ export function setClient(next: OpencodeClient | null): void {
     sessionToProject.clear();
     projectsWithSendInProgress.clear();
   } else {
+    // The new server may not know about sessions verified against the
+    // previous server, so drop all verification state. Sessions with a
+    // restored opencode id will re-verify lazily on the next send; sessions
+    // whose id was cleared on disconnect stay cleared (send creates fresh).
+    for (const session of sessions.values()) {
+      session.opencodeSessionVerified = false;
+    }
     const existingProjectRoot = [...sessions.keys()][0];
     if (existingProjectRoot) void startStream(existingProjectRoot);
   }
@@ -131,6 +232,11 @@ export function setClient(next: OpencodeClient | null): void {
 /** Clear all state — called on app quit. */
 export function dispose(): void {
   stopStream();
+  // Finalize any in-flight assistant messages so the DB doesn't retain
+  // forever-pending bubbles. Runs before closePersistence() in before-quit.
+  for (const session of sessions.values()) {
+    finalizeInflightMessages(session);
+  }
   client = null;
   sessions.clear();
   sessionToProject.clear();
@@ -149,7 +255,7 @@ export function dispose(): void {
 export async function send(
   projectRoot: string,
   text: string
-): Promise<{ ok: boolean; assistantMessageId?: string; error?: string }> {
+): Promise<{ ok: boolean; assistantMessageId?: string; sessionId?: string; error?: string }> {
   if (!client) {
     return { ok: false, error: "OpenCode server is not connected." };
   }
@@ -168,15 +274,66 @@ export async function send(
   }
   projectsWithSendInProgress.add(projectRoot);
 
-  // Ensure we have an OpenCode session.
+  // Ensure we have an OpenCode session. Each await below can be interrupted
+  // by a concurrent loadSession/newSession that replaces this chatSession in
+  // the `sessions` map. After every await we re-check that we still own the
+  // slot; if not, we bail without touching projectsWithSendInProgress (the
+  // replacement already cleared it). The orphaned server session we may have
+  // created is left for the server to GC.
   if (!chatSession.opencodeSessionId) {
     const created = await createOpencodeSession(projectRoot);
     if (!created.ok) {
       projectsWithSendInProgress.delete(projectRoot);
       return { ok: false, error: created.error };
     }
+    if (chatSession !== sessions.get(projectRoot)) {
+      return { ok: false, error: "Conversation switched before send completed. Please resend." };
+    }
     chatSession.opencodeSessionId = created.id;
+    chatSession.opencodeSessionVerified = true;
     sessionToProject.set(created.id, projectRoot);
+  } else if (!chatSession.opencodeSessionVerified) {
+    // We restored a stored opencode session id on load but have not yet
+    // confirmed it is alive on the current server (e.g. load happened while
+    // disconnected, or the server has since recycled). Verify before sending;
+    // if the id is dead, fall through to create a fresh session so the user
+    // does not have to manually recover from a stale-server-session state.
+    const status = await verifyOpencodeSession(projectRoot, chatSession.opencodeSessionId);
+    if (chatSession !== sessions.get(projectRoot)) {
+      return { ok: false, error: "Conversation switched before send completed. Please resend." };
+    }
+    if (status === "dead") {
+      chatLog("stored opencode session is no longer alive; creating a new one", {
+        projectRoot,
+        opencodeSessionId: chatSession.opencodeSessionId,
+      });
+      // Drop the stale routing entry before we throw away the id.
+      sessionToProject.delete(chatSession.opencodeSessionId);
+      chatSession.opencodeSessionId = "";
+      if (chatSession.sessionId) {
+        safePersist("updateSessionMeta:opencodeSessionId:null", () =>
+          persistence.updateSessionMeta(chatSession.sessionId!, { opencodeSessionId: null })
+        );
+      }
+      const created = await createOpencodeSession(projectRoot);
+      if (!created.ok) {
+        projectsWithSendInProgress.delete(projectRoot);
+        return { ok: false, error: created.error };
+      }
+      if (chatSession !== sessions.get(projectRoot)) {
+        return { ok: false, error: "Conversation switched before send completed. Please resend." };
+      }
+      chatSession.opencodeSessionId = created.id;
+      chatSession.opencodeSessionVerified = true;
+      sessionToProject.set(created.id, projectRoot);
+    } else {
+      // alive or unknown — proceed optimistically. Unknown (transient lookup
+      // failure) does not block the send; we trust the stored id and let the
+      // server reject promptAsync if it really is gone (which surfaces as a
+      // normal send error to the user).
+      chatSession.opencodeSessionVerified = status === "alive";
+      sessionToProject.set(chatSession.opencodeSessionId, projectRoot);
+    }
   }
 
   const sessionId = chatSession.opencodeSessionId;
@@ -212,6 +369,35 @@ export async function send(
   chatSession.pendingAssistantLocalId = assistantLocalId;
   // assistantToUserMessageId is populated in handleMessageUpdated when the
   // server announces the user message it created for this prompt.
+
+  // Persist: create a DB session record on the first message of a new
+  // conversation, then save the user + pending assistant messages so the
+  // conversation appears in history immediately. Best-effort — a persistence
+  // failure never blocks the live chat (the in-memory session is still valid).
+  if (chatSession.sessionId === null) {
+    const title = titleFromPrompt(promptText);
+    const newId = persistCreateSession(projectRoot, title);
+    if (newId) {
+      chatSession.sessionId = newId;
+      chatSession.title = title;
+    }
+  }
+  if (chatSession.sessionId) {
+    const userMsg = chatSession.messages[chatSession.messages.length - 2];
+    const assistantMsg = chatSession.messages[chatSession.messages.length - 1];
+    if (userMsg) persistMessageAt(chatSession, userMsg, chatSession.messages.length - 2);
+    if (assistantMsg) persistMessageAt(chatSession, assistantMsg, chatSession.messages.length - 1);
+    // Record the OpenCode server session id for future resume support.
+    if (chatSession.opencodeSessionId) {
+      safePersist("updateSessionMeta:opencodeSessionId", () =>
+        persistence.updateSessionMeta(chatSession.sessionId!, {
+          opencodeSessionId: chatSession.opencodeSessionId,
+        })
+      );
+    }
+    safePersist("touchSession", () => persistence.touchSession(chatSession.sessionId!));
+  }
+
   chatLog("send accepted", {
     projectRoot,
     sessionId,
@@ -232,7 +418,7 @@ export async function send(
     promptText
   );
 
-  return { ok: true, assistantMessageId: assistantLocalId };
+  return { ok: true, assistantMessageId: assistantLocalId, sessionId: chatSession.sessionId ?? undefined };
 }
 
 async function dispatchPromptAsync(
@@ -335,6 +521,7 @@ export async function abort(
       (message.status === "pending" || message.status === "streaming")
     ) {
       message.status = "complete";
+      persistMessageUpdate(chatSession, message);
       chatSession.assistantToUserMessageId.delete(message.id);
       chatSession.assistantIdsWithObservedBusy.delete(message.id);
       emitDone(projectRoot, message.id);
@@ -374,63 +561,263 @@ export function history(projectRoot: string): ChatMessage[] {
 }
 
 /**
- * Clear the conversation history for a project and invalidate the OpenCode
- * session so the next prompt creates a brand-new server-side session.
- *
- * The current OpenCode session is deleted on the server (best-effort). Local
- * state is then reset and `opencodeSessionId` is emptied, which makes `send()`
- * lazily create a fresh session on the next prompt.
+ * Reset a project's in-memory ChatSession to a fresh, empty conversation.
+ * The previous conversation is NOT deleted from the database — it remains in
+ * history and can be reloaded with `loadSession`. Only the in-memory working
+ * state is replaced. The OpenCode server session id mapping is dropped so the
+ * next `send()` lazily creates a new server-side session.
  */
-export async function clear(
+function resetToFreshSession(projectRoot: string): void {
+  const chatSession = sessions.get(projectRoot);
+  if (chatSession?.opencodeSessionId) {
+    sessionToProject.delete(chatSession.opencodeSessionId);
+  }
+  sessions.set(projectRoot, {
+    opencodeSessionId: "",
+    opencodeSessionVerified: false,
+    sessionId: null,
+    title: null,
+    messages: [],
+    pendingAssistantLocalId: null,
+    opencodeToLocal: new Map(),
+    ignoredOpencodeMessageIds: new Set(),
+    assistantToUserMessageId: new Map(),
+    assistantIdsWithObservedBusy: new Set(),
+    pendingPartTextByMessageId: new Map(),
+  });
+  projectsWithSendInProgress.delete(projectRoot);
+}
+
+/**
+ * Start a new conversation for a project. The current OpenCode server session
+ * is deleted best-effort; the in-memory ChatSession is reset to empty. The
+ * previous conversation (if any) stays in the SQLite history and remains
+ * available via `loadSession` / `listSessions`.
+ */
+export async function newSession(
   projectRoot: string
 ): Promise<{ ok: boolean; error?: string }> {
   const chatSession = sessions.get(projectRoot);
-  if (!chatSession) return { ok: true };
 
-  // If this project is the one actively streaming, stop the stream first so
-  // we don't race with in-flight events for the session we're about to delete.
+  // If this project is actively streaming, stop the stream first so we don't
+  // race with in-flight events for the session we're about to drop.
   if (activeStreamDirectory === projectRoot) {
     stopStream();
   }
 
-  const sessionId = chatSession.opencodeSessionId;
+  // Finalize any in-flight assistant message (with whatever streamed so far)
+  // so the abandoned conversation doesn't retain a forever-pending bubble.
+  if (chatSession) {
+    finalizeInflightMessages(chatSession);
+  }
 
-  // Delete the server-side session best-effort. Failures (e.g. server gone,
-  // session already removed) are non-fatal — we still reset locally so the
-  // next prompt creates a fresh session.
-  if (client && sessionId) {
+  // Delete the server-side session best-effort. Failures (server gone, session
+  // already removed) are non-fatal — we still reset locally.
+  if (client && chatSession?.opencodeSessionId) {
     try {
-      const result = await client.session.delete({ path: { id: sessionId } });
+      const result = await client.session.delete({
+        path: { id: chatSession.opencodeSessionId },
+      });
       if (result.error) {
-        chatLog("clear: session.delete returned error", {
-          sessionId,
+        chatLog("newSession: session.delete returned error", {
+          sessionId: chatSession.opencodeSessionId,
           error: describeSdkError(result.error),
         });
       }
     } catch (err) {
-      chatLog("clear: session.delete threw", {
-        sessionId,
+      chatLog("newSession: session.delete threw", {
+        sessionId: chatSession.opencodeSessionId,
         error: err instanceof Error ? err.message : String(err),
       });
     }
   }
 
-  // Reset local conversation state + invalidate the server session id. With
-  // `opencodeSessionId` empty, `send()` will create a new OpenCode session on
-  // the next prompt (see the branch at send() line ~172).
-  chatSession.messages = [];
-  chatSession.pendingAssistantLocalId = null;
-  chatSession.opencodeToLocal.clear();
-  chatSession.ignoredOpencodeMessageIds.clear();
-  chatSession.assistantToUserMessageId.clear();
-  chatSession.assistantIdsWithObservedBusy.clear();
-  chatSession.pendingPartTextByMessageId.clear();
-  delete chatSession.resolvedModel;
-  chatSession.opencodeSessionId = "";
-  if (sessionId) sessionToProject.delete(sessionId);
-  projectsWithSendInProgress.delete(projectRoot);
-
+  resetToFreshSession(projectRoot);
   return { ok: true };
+}
+
+/**
+ * Clear the current conversation and start fresh. Equivalent to `newSession` —
+ * kept for the existing `opencode:chat:clear` IPC channel. The previous
+ * conversation remains in history.
+ */
+export async function clear(
+  projectRoot: string
+): Promise<{ ok: boolean; error?: string }> {
+  return newSession(projectRoot);
+}
+
+// ---------------------------------------------------------------------------
+// Session history (backed by SQLite persistence)
+// ---------------------------------------------------------------------------
+
+/** List persisted conversations for a project, most recently active first. */
+export function listSessions(projectRoot: string): ChatSessionMeta[] {
+  try {
+    return persistence.listSessions(projectRoot);
+  } catch (err) {
+    chatLog("listSessions error", {
+      projectRoot,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
+}
+
+/**
+ * Load a persisted conversation into the active in-memory ChatSession for its
+ * project and return its messages + metadata. Returns null if the session id
+ * is unknown or belongs to a different project.
+ *
+ * Resume behavior: if the stored `opencodeSessionId` is non-empty, we try to
+ * reuse it so the conversation continues with its server-side context intact.
+ * When a client is attached we verify the id is still alive on the server via
+ * `client.session.list`; when it is alive (or when the lookup fails
+ * transiently) we register the id in `sessionToProject` so SSE events route
+ * back to this project and the next `send()` continues the session. When the
+ * id is confirmed dead we clear it (in memory and in the DB) and the next
+ * `send()` will create a fresh server session. When no client is attached we
+ * keep the stored id optimistically and mark it unverified; `send()` will
+ * verify it lazily before the first prompt.
+ */
+export async function loadSession(
+  projectRoot: string,
+  sessionId: string
+): Promise<{ messages: ChatMessage[]; meta: ChatSessionMeta } | null> {
+  // Validate the session exists and belongs to this project before touching
+  // any live state — a bad session id should not disrupt the current chat.
+  let meta: ChatSessionMeta | null = null;
+  try {
+    meta = persistence.getSession(sessionId);
+    if (!meta || meta.projectRoot !== projectRoot) return null;
+  } catch (err) {
+    chatLog("loadSession error", {
+      sessionId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+
+  // Stop the stream if it's active for this project — we're switching context.
+  if (activeStreamDirectory === projectRoot) {
+    stopStream();
+  }
+
+  // Finalize the currently-active conversation's in-flight messages so the DB
+  // never retains a forever-pending bubble. This runs even when reloading the
+  // same session: the stream was just stopped, so any in-flight assistant
+  // message is now abandoned and should be settled with its partial content.
+  const existing = sessions.get(projectRoot);
+  if (existing) {
+    finalizeInflightMessages(existing);
+  }
+  if (existing?.opencodeSessionId) {
+    sessionToProject.delete(existing.opencodeSessionId);
+  }
+
+  // Fetch messages AFTER finalizing so a same-session reload picks up the
+  // finalized (complete) state of any abandoned in-flight assistant message.
+  let messages: ChatMessage[] = [];
+  try {
+    messages = persistence.getSessionMessages(sessionId);
+  } catch (err) {
+    chatLog("loadSession error", {
+      sessionId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+
+  // Determine whether the stored OpenCode server session can be resumed. We
+  // restore the id from the DB meta and, when possible, verify it against the
+  // live server. A transient lookup failure is treated as "unknown" so a
+  // flaky network never discards resumable context — `send()` re-verifies.
+  const storedOpencodeSessionId = meta.opencodeSessionId ?? "";
+  let opencodeSessionId = storedOpencodeSessionId;
+  let opencodeSessionVerified = false;
+
+  if (opencodeSessionId) {
+    if (client) {
+      const status = await verifyOpencodeSession(projectRoot, opencodeSessionId);
+      if (status === "dead") {
+        chatLog("loaded opencode session is no longer alive; dropping stored id", {
+          projectRoot,
+          sessionId: meta.id,
+          opencodeSessionId,
+        });
+        opencodeSessionId = "";
+        opencodeSessionVerified = false;
+        safePersist("loadSession:clear dead opencodeSessionId", () =>
+          persistence.updateSessionMeta(meta!.id, { opencodeSessionId: null })
+        );
+      } else {
+        // alive or unknown — keep the id and route events for it. send() will
+        // re-verify only in the unknown case; alive is marked verified.
+        opencodeSessionVerified = status === "alive";
+        sessionToProject.set(opencodeSessionId, projectRoot);
+      }
+    } else {
+      // No client attached yet: keep the id optimistically so the first send
+      // after reconnect can resume. send() verifies before dispatching.
+      sessionToProject.set(opencodeSessionId, projectRoot);
+    }
+  }
+
+  sessions.set(projectRoot, {
+    sessionId: meta.id,
+    title: meta.title,
+    opencodeSessionId,
+    opencodeSessionVerified,
+    messages,
+    pendingAssistantLocalId: null,
+    opencodeToLocal: new Map(),
+    ignoredOpencodeMessageIds: new Set(),
+    assistantToUserMessageId: new Map(),
+    assistantIdsWithObservedBusy: new Set(),
+    pendingPartTextByMessageId: new Map(),
+  });
+  projectsWithSendInProgress.delete(projectRoot);
+  return { messages, meta };
+}
+
+/** Delete a persisted conversation (and its messages via cascade). */
+export function deleteSession(sessionId: string): { ok: boolean; error?: string } {
+  try {
+    // If this session is the active one for some project, reset that project to
+    // a fresh empty session so the UI doesn't keep showing deleted content.
+    for (const [projectRoot, chatSession] of sessions) {
+      if (chatSession.sessionId === sessionId) {
+        if (activeStreamDirectory === projectRoot) stopStream();
+        resetToFreshSession(projectRoot);
+        break;
+      }
+    }
+    persistence.deleteSession(sessionId);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Rename a persisted conversation. Updates the active in-memory title too. */
+export function renameSession(
+  sessionId: string,
+  title: string
+): { ok: boolean; error?: string } {
+  const trimmed = title.trim();
+  if (!trimmed) return { ok: false, error: "Title cannot be empty." };
+  try {
+    persistence.updateSessionMeta(sessionId, { title: trimmed });
+    for (const chatSession of sessions.values()) {
+      if (chatSession.sessionId === sessionId) {
+        chatSession.title = trimmed;
+        break;
+      }
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -442,6 +829,9 @@ function getOrCreateSession(projectRoot: string): ChatSession {
   if (!s) {
     s = {
       opencodeSessionId: "",
+      opencodeSessionVerified: false,
+      sessionId: null,
+      title: null,
       messages: [],
       pendingAssistantLocalId: null,
       opencodeToLocal: new Map(),
@@ -595,6 +985,62 @@ async function createOpencodeSession(
   }
 }
 
+/**
+ * Check whether a stored OpenCode session id is still alive on the server.
+ *
+ * Uses `client.session.list` and tests membership by id. We prefer `list`
+ * over `session.get` (which 404s on a dead id) because a single list call
+ * also lets future code reason about all known sessions, and over
+ * `session.status` (used by kodachi) because `list` returns a plain array
+ * of `Session` objects whose `id` field is the stable identifier.
+ *
+ * Returns:
+ * - `"alive"`  — the id is present in the server's session list.
+ * - `"dead"`   — the list call succeeded but the id is not present.
+ * - `"unknown"` — the client is missing or the list call errored. Callers
+ *   must treat this as "proceed optimistically" so a transient failure
+ *   never discards resumable context; `send()` will re-verify lazily.
+ */
+async function verifyOpencodeSession(
+  projectRoot: string,
+  opencodeSessionId: string
+): Promise<"alive" | "dead" | "unknown"> {
+  const c = client;
+  if (!c) return "unknown";
+  try {
+    const result = await c.session.list({
+      query: { directory: projectRoot },
+    });
+    // If the client was swapped (disconnect/reconnect) while we were
+    // awaiting, the verdict reflects the old server and is no longer
+    // meaningful. Return "unknown" so callers re-verify lazily.
+    if (c !== client) {
+      chatLog("verifyOpencodeSession: client changed during list", {
+        projectRoot,
+        opencodeSessionId,
+      });
+      return "unknown";
+    }
+    if (!result.data) {
+      chatLog("verifyOpencodeSession: list returned no data", {
+        projectRoot,
+        opencodeSessionId,
+        error: result.error ? describeSdkError(result.error as { name: string; data?: unknown }) : undefined,
+      });
+      return "unknown";
+    }
+    const found = result.data.some((session) => session.id === opencodeSessionId);
+    return found ? "alive" : "dead";
+  } catch (err) {
+    chatLog("verifyOpencodeSession: list threw", {
+      projectRoot,
+      opencodeSessionId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return "unknown";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Part serialization
 // ---------------------------------------------------------------------------
@@ -702,6 +1148,7 @@ function markAssistantError(
   if (!message) return;
   message.status = "error";
   message.error = error;
+  persistMessageUpdate(chatSession, message);
   if (chatSession.pendingAssistantLocalId === localId) {
     chatSession.pendingAssistantLocalId = null;
   }
@@ -718,6 +1165,7 @@ function markInflightMessagesError(chatSession: ChatSession, error: string): voi
     ) {
       message.status = "error";
       message.error = error;
+      persistMessageUpdate(chatSession, message);
       emitError(chatSession, message.id, error);
     }
   }
@@ -778,7 +1226,16 @@ function startStream(projectRoot: string): Promise<void> {
     return activeStreamReady ?? Promise.resolve();
   }
   if (streamShouldRun && activeStreamDirectory !== projectRoot) {
+    // The stream is switching to a different project. Finalize any in-flight
+    // assistant message in the previous project so it doesn't get orphaned as
+    // a forever-pending bubble (its events will no longer arrive once we stop
+    // the stream).
+    const previousProject = activeStreamDirectory;
     stopStream();
+    if (previousProject) {
+      const previousSession = sessions.get(previousProject);
+      if (previousSession) finalizeInflightMessages(previousSession);
+    }
   }
   activeStreamDirectory = projectRoot;
   streamShouldRun = true;
@@ -1033,6 +1490,7 @@ function handlePermissionUpdated(permission: Permission): void {
   if (idx >= 0) message.parts[idx] = part;
   else message.parts.push(part);
   if (message.status === "pending") message.status = "streaming";
+  persistMessageUpdate(chatSession, message);
   emitPart(chatSession, localId, part);
 }
 
@@ -1059,6 +1517,7 @@ function handlePermissionReplied(
       response,
     };
     parts[idx] = updated;
+    persistMessageUpdate(chatSession, message);
     emitPart(chatSession, message.id, updated);
     return;
   }
@@ -1216,6 +1675,12 @@ function handleMessageUpdated(info: Message): void {
   if (info.error) {
     if (info.error.name === "MessageAbortedError") {
       message.status = "complete";
+      persistMessageUpdate(chatSession, message);
+      if (chatSession.pendingAssistantLocalId === localId) {
+        chatSession.pendingAssistantLocalId = null;
+      }
+      chatSession.assistantToUserMessageId.delete(localId);
+      chatSession.assistantIdsWithObservedBusy.delete(localId);
       emitDone(projectRoot, localId);
       return;
     }
@@ -1223,6 +1688,12 @@ function handleMessageUpdated(info: Message): void {
     const errorMsg = `Assistant error: ${info.error.name}`;
     message.status = "error";
     message.error = errorMsg;
+    persistMessageUpdate(chatSession, message);
+    if (chatSession.pendingAssistantLocalId === localId) {
+      chatSession.pendingAssistantLocalId = null;
+    }
+    chatSession.assistantToUserMessageId.delete(localId);
+    chatSession.assistantIdsWithObservedBusy.delete(localId);
     emitError(chatSession, localId, errorMsg);
     return;
   }
@@ -1382,6 +1853,7 @@ function completeAssistantMessage(
   message.status = "complete";
   chatSession.assistantToUserMessageId.delete(message.id);
   chatSession.assistantIdsWithObservedBusy.delete(message.id);
+  persistMessageUpdate(chatSession, message);
   emitDone(projectRoot, message.id, message.content, message.parts);
 }
 
@@ -1526,6 +1998,7 @@ function handleSessionError(
     ) {
       message.status = "error";
       message.error = errorMsg;
+      persistMessageUpdate(chatSession, message);
       emitError(chatSession, message.id, errorMsg);
     }
   }

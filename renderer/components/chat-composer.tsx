@@ -7,7 +7,6 @@ import {
   Square,
   X,
   AlertCircle,
-  Trash2,
   Terminal,
   Eye,
   FilePlus,
@@ -26,6 +25,8 @@ import {
   Brain,
   Info,
   Navigation,
+  Plus,
+  Clock,
 } from "lucide-react";
 import { useOpencode } from "@/hooks/use-opencode";
 import { useOpencodeChat } from "@/hooks/use-opencode-chat";
@@ -33,6 +34,7 @@ import { CHAT_PRESETS } from "@/lib/chat-presets";
 import type { ChatMessage, ChatPart, ChatPermissionResponse } from "@/lib/opencode-types";
 import type { LaraLensSettings } from "@/lib/settings-types";
 import { cn } from "@/lib/utils";
+import { ThreadManager } from "./thread-manager";
 
 // prompt-kit components
 import {
@@ -105,9 +107,14 @@ export function ChatComposer({ projectRoot, routeContext = null }: ChatComposerP
     isStreaming,
     error,
     loading,
+    sessions,
+    activeSession,
     send,
     abort,
-    clear,
+    startNewSession,
+    loadSessionById,
+    deleteSessionById,
+    renameSessionById,
     replyPermission,
     dismissError,
   } = useOpencodeChat(projectRoot);
@@ -116,6 +123,7 @@ export function ChatComposer({ projectRoot, routeContext = null }: ChatComposerP
   const [input, setInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [settings, setSettings] = useState<LaraLensSettings | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [contextAware, setContextAware] = useState(false);
   const lastSentContextRef = useRef<string | null>(null);
   // Deferred mount of the heavy conversation subtree (messages list,
@@ -314,6 +322,22 @@ export function ChatComposer({ projectRoot, routeContext = null }: ChatComposerP
     [isStreaming, submitting]
   );
 
+  // Session history handlers. Starting a new conversation archives the current
+  // one to history (it was persisted incrementally as messages settled).
+  // Selecting a past session loads it and closes the sidebar.
+  const handleNewConversation = useCallback(async () => {
+    await startNewSession();
+    setHistoryOpen(false);
+  }, [startNewSession]);
+
+  const handleSelectSession = useCallback(
+    async (sessionId: string) => {
+      await loadSessionById(sessionId);
+      setHistoryOpen(false);
+    },
+    [loadSessionById]
+  );
+
   const composerLayerRef = useRef<HTMLDivElement>(null);
 
   // Escape collapses the empty composer; focus the textarea shortly after it
@@ -338,17 +362,20 @@ export function ChatComposer({ projectRoot, routeContext = null }: ChatComposerP
 
   // Escape also collapses the conversation panel back to the pill, mirroring
   // the empty-composer behavior so the chat can be dismissed at any time.
+  // When the thread manager is open, Escape closes it first — the ThreadManager
+  // handles that case, so we bail out here to avoid dismissing both at once.
   useEffect(() => {
     if (!open || !hasStartedConversation) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (historyOpen) return;
         e.stopPropagation();
         setOpen(false);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, hasStartedConversation]);
+  }, [open, hasStartedConversation, historyOpen]);
 
   // Disabled pill — render but greyed out.
   if (!enabled && !open) {
@@ -546,11 +573,32 @@ export function ChatComposer({ projectRoot, routeContext = null }: ChatComposerP
               doesn't freeze the container animation. */}
           {open && hasStartedConversation && panelReady && (
             <div className="animate-panel-fade-in relative flex h-full w-full flex-col overflow-hidden">
-              {/* Minimal header — context + info (left), actions (right) */}
+              {/* Thread manager — animates within the card, covering the
+                  conversation content. Clipped to the card's rounded bounds
+                  by the parent's `overflow-hidden`. */}
+              {historyOpen && (
+                <ThreadManager
+                  sessions={sessions}
+                  activeSessionId={activeSession?.id ?? null}
+                  onSelect={handleSelectSession}
+                  onNew={handleNewConversation}
+                  onClose={() => setHistoryOpen(false)}
+                />
+              )}
+
+              {/* Minimal header — title + context + info (left), actions (right) */}
               <div className="flex shrink-0 items-center justify-between px-4 py-2.5">
-                <div className="flex items-center gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  {activeSession?.title && (
+                    <span
+                      className="max-w-[280px] truncate text-xs font-medium text-[var(--flare)]"
+                      title={activeSession.title}
+                    >
+                      {activeSession.title}
+                    </span>
+                  )}
                   {contextSize !== null && (
-                    <span className="text-[11px] tabular-nums text-[var(--etch)]">
+                    <span className="shrink-0 text-[11px] tabular-nums text-[var(--etch)]">
                       {formatTokens(contextSize)} context
                     </span>
                   )}
@@ -564,23 +612,32 @@ export function ChatComposer({ projectRoot, routeContext = null }: ChatComposerP
                           ? `Agent: ${settings.defaultAgent}`
                           : "Agent: OpenCode default",
                       ].join("\n")}
-                      className="inline-flex items-center text-[var(--etch)] opacity-70 transition-opacity hover:opacity-100"
+                      className="inline-flex shrink-0 items-center text-[var(--etch)] opacity-70 transition-opacity hover:opacity-100"
                     >
                       <Info className="h-3 w-3" />
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex shrink-0 items-center gap-1">
                   <button
-                    onClick={() => {
-                      clear();
-                      lastSentContextRef.current = null;
-                    }}
-                    disabled={messages.length === 0 || isStreaming}
-                    title="Clear conversation"
+                    onClick={() => setHistoryOpen((v) => !v)}
+                    title="Conversation history"
+                    className={cn(
+                      "rounded p-1.5 transition-colors hover:bg-[var(--void)] hover:text-[var(--flare)]",
+                      historyOpen
+                        ? "bg-[var(--void)] text-[var(--flare)]"
+                        : "text-[var(--etch)]"
+                    )}
+                  >
+                    <Clock className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={handleNewConversation}
+                    disabled={isStreaming}
+                    title="New conversation"
                     className="rounded p-1.5 text-[var(--etch)] transition-colors hover:bg-[var(--void)] hover:text-[var(--flare)] disabled:opacity-30"
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    <Plus className="h-3.5 w-3.5" />
                   </button>
                   <button
                     onClick={() => setOpen(false)}

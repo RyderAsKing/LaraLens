@@ -100,11 +100,26 @@ export interface ChatMessage {
   tokens?: ChatTokens;
 }
 
+/** Metadata for a persisted conversation (one row in the sessions table). */
+export interface ChatSessionMeta {
+  id: string;
+  projectRoot: string;
+  title: string;
+  createdAt: number;
+  lastActiveAt: number;
+  opencodeSessionId: string | null;
+}
+
 export interface ChatSendResult {
   ok: boolean;
   assistantMessageId?: string;
+  sessionId?: string;
   error?: string;
 }
+
+export type ChatLoadSessionResult =
+  | { ok: true; messages: ChatMessage[]; meta: ChatSessionMeta }
+  | { ok: false; error: string };
 
 export interface ChatAbortResult {
   ok: boolean;
@@ -234,6 +249,11 @@ declare global {
         clear: (projectRoot: string) => Promise<{ ok: boolean; error?: string }>;
         abort: (projectRoot: string) => Promise<ChatAbortResult>;
         replyPermission: (projectRoot: string, permissionID: string, response: ChatPermissionResponse) => Promise<{ ok: boolean; error?: string }>;
+        listSessions: (projectRoot: string) => Promise<ChatSessionMeta[]>;
+        loadSession: (projectRoot: string, sessionId: string) => Promise<ChatLoadSessionResult>;
+        newSession: (projectRoot: string) => Promise<{ ok: boolean; error?: string }>;
+        deleteSession: (sessionId: string) => Promise<{ ok: boolean; error?: string }>;
+        renameSession: (sessionId: string, title: string) => Promise<{ ok: boolean; error?: string }>;
         onPart: (callback: (payload: ChatPartPayload) => void) => () => void;
         onDone: (callback: (payload: ChatDonePayload) => void) => () => void;
         onError: (callback: (payload: ChatErrorPayload) => void) => () => void;

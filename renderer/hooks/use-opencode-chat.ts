@@ -1,16 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ChatMessage, ChatPart, ChatPermissionResponse } from "@/lib/opencode-types";
+import type { ChatMessage, ChatPart, ChatPermissionResponse, ChatSessionMeta } from "@/lib/opencode-types";
 
 /**
  * React hook for the OpenCode chat subsystem.
  *
  * Manages per-project conversation state in the renderer:
- * - Loads history from the main process when the project root changes.
- * - Subscribes to `opencode:chat:part` / `done` / `error` push events
- *   to update messages in real time as the assistant streams.
- * - Exposes `send`, `abort`, and `clear` actions.
+ * - Loads the persisted session list for the project when it changes, and
+ *   auto-loads the most recent conversation (if any) so past chats survive
+ *   restarts.
+ * - Subscribes to `opencode:chat:part` / `done` / `error` push events to
+ *   update messages in real time as the assistant streams.
+ * - Exposes `send`, `abort`, `startNewSession`, `loadSessionById`,
+ *   `deleteSessionById`, `renameSessionById`, and `replyPermission`.
  *
  * Streaming state (`isStreaming`) is derived from the messages array —
  * true when any assistant message is `pending` or `streaming`.
@@ -19,6 +22,8 @@ export function useOpencodeChat(projectRoot: string | null) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [sessions, setSessions] = useState<ChatSessionMeta[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const projectRootRef = useRef<string | null>(projectRoot);
   const messagesRef = useRef<ChatMessage[]>(messages);
 
@@ -30,10 +35,31 @@ export function useOpencodeChat(projectRoot: string | null) {
     messagesRef.current = messages;
   }, [messages]);
 
-  // Load history when the project root changes.
+  // Refresh the persisted session list for the current project. Used after
+  // sends, deletes, renames, and loads so the sidebar stays in sync. Returns
+  // the fetched list so callers can act on it without a second round-trip.
+  const refreshSessions = useCallback(
+    async (root: string): Promise<ChatSessionMeta[]> => {
+      try {
+        const list = await window.opencode.chat.listSessions(root);
+        setSessions(list);
+        return list;
+      } catch {
+        setSessions([]);
+        return [];
+      }
+    },
+    []
+  );
+
+  // Load the session list + most recent conversation when the project root
+  // changes. Auto-restores the last active conversation so chats survive
+  // restarts; if there are no past sessions, starts with an empty chat.
   useEffect(() => {
     if (!projectRoot) {
       setMessages([]);
+      setSessions([]);
+      setActiveSessionId(null);
       setError(null);
       return;
     }
@@ -41,20 +67,37 @@ export function useOpencodeChat(projectRoot: string | null) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    window.opencode.chat
-      .history(projectRoot)
-      .then((history) => {
-        if (!cancelled) {
-          setMessages(history);
-          setError(null);
+
+    (async () => {
+      try {
+        const list = await window.opencode.chat.listSessions(projectRoot);
+        if (cancelled) return;
+        setSessions(list);
+        if (list.length > 0) {
+          const mostRecent = list[0];
+          const result = await window.opencode.chat.loadSession(projectRoot, mostRecent.id);
+          if (cancelled) return;
+          if (result.ok) {
+            setMessages(result.messages);
+            setActiveSessionId(result.meta.id);
+          } else {
+            setMessages([]);
+            setActiveSessionId(null);
+          }
+        } else {
+          setMessages([]);
+          setActiveSessionId(null);
         }
-      })
-      .catch(() => {
-        if (!cancelled) setMessages([]);
-      })
-      .finally(() => {
+      } catch {
+        if (!cancelled) {
+          setMessages([]);
+          setSessions([]);
+          setActiveSessionId(null);
+        }
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    })();
 
     return () => {
       cancelled = true;
@@ -170,6 +213,11 @@ export function useOpencodeChat(projectRoot: string | null) {
     [messages]
   );
 
+  const activeSession = useMemo(
+    () => sessions.find((s) => s.id === activeSessionId) ?? null,
+    [sessions, activeSessionId]
+  );
+
   const send = useCallback(
     async (text: string): Promise<boolean> => {
       const prompt = text.trim();
@@ -208,9 +256,18 @@ export function useOpencodeChat(projectRoot: string | null) {
           status: "pending" as const,
         },
       ]);
+
+      // If this was the first message of a new conversation, the main process
+      // created a DB session row — track it and refresh the sidebar so the new
+      // conversation (with its auto-generated title) appears at the top.
+      if (result.sessionId && result.sessionId !== activeSessionId) {
+        setActiveSessionId(result.sessionId);
+        void refreshSessions(projectRoot);
+      }
+
       return true;
     },
-    [projectRoot]
+    [projectRoot, activeSessionId, refreshSessions]
   );
 
   const abort = useCallback(async (): Promise<void> => {
@@ -223,12 +280,96 @@ export function useOpencodeChat(projectRoot: string | null) {
     }
   }, [projectRoot]);
 
-  const clear = useCallback(async (): Promise<void> => {
+  /**
+   * Start a fresh, empty conversation. The current conversation is archived to
+   * history (it was persisted incrementally as messages settled) and can be
+   * reloaded from the sidebar.
+   */
+  const startNewSession = useCallback(async (): Promise<void> => {
     if (!projectRoot) return;
-    await window.opencode.chat.clear(projectRoot);
-    setMessages([]);
-    setError(null);
+    try {
+      await window.opencode.chat.newSession(projectRoot);
+      setMessages([]);
+      setActiveSessionId(null);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start a new conversation.");
+    }
   }, [projectRoot]);
+
+  /** Alias for `startNewSession`, kept for the existing chat-composer usage. */
+  const clear = useCallback(async (): Promise<void> => {
+    return startNewSession();
+  }, [startNewSession]);
+
+  /** Load a specific past conversation by id. No-op if it's already active. */
+  const loadSessionById = useCallback(
+    async (sessionId: string): Promise<void> => {
+      if (!projectRoot) return;
+      if (sessionId === activeSessionId) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await window.opencode.chat.loadSession(projectRoot, sessionId);
+        if (result.ok) {
+          setMessages(result.messages);
+          setActiveSessionId(result.meta.id);
+        } else {
+          setError(result.error ?? "Failed to load conversation.");
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load conversation.");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [projectRoot, activeSessionId]
+  );
+
+  /** Delete a past conversation. If it's the active one, reset to empty. */
+  const deleteSessionById = useCallback(
+    async (sessionId: string): Promise<void> => {
+      if (!sessionId) return;
+      try {
+        const result = await window.opencode.chat.deleteSession(sessionId);
+        if (!result.ok) {
+          setError(result.error ?? "Failed to delete conversation.");
+          return;
+        }
+        if (sessionId === activeSessionId) {
+          setMessages([]);
+          setActiveSessionId(null);
+        }
+        if (projectRoot) await refreshSessions(projectRoot);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to delete conversation.");
+      }
+    },
+    [activeSessionId, projectRoot, refreshSessions]
+  );
+
+  /** Rename a conversation. Updates the local list on success. */
+  const renameSessionById = useCallback(
+    async (sessionId: string, title: string): Promise<boolean> => {
+      const trimmed = title.trim();
+      if (!trimmed) return false;
+      try {
+        const result = await window.opencode.chat.renameSession(sessionId, trimmed);
+        if (!result.ok) {
+          setError(result.error ?? "Failed to rename conversation.");
+          return false;
+        }
+        setSessions((prev) =>
+          prev.map((s) => (s.id === sessionId ? { ...s, title: trimmed } : s))
+        );
+        return true;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to rename conversation.");
+        return false;
+      }
+    },
+    []
+  );
 
   const replyPermission = useCallback(
     async (permissionID: string, response: ChatPermissionResponse): Promise<boolean> => {
@@ -245,5 +386,22 @@ export function useOpencodeChat(projectRoot: string | null) {
 
   const dismissError = useCallback(() => setError(null), []);
 
-  return { messages, isStreaming, error, loading, send, abort, clear, replyPermission, dismissError };
+  return {
+    messages,
+    isStreaming,
+    error,
+    loading,
+    sessions,
+    activeSessionId,
+    activeSession,
+    send,
+    abort,
+    clear,
+    startNewSession,
+    loadSessionById,
+    deleteSessionById,
+    renameSessionById,
+    replyPermission,
+    dismissError,
+  };
 }

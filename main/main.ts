@@ -8,6 +8,7 @@ import { scanProject } from "./scanner/index";
 import * as opencode from "./opencode";
 import * as updater from "./updater";
 import * as chat from "./opencode/chat";
+import * as chatPersistence from "./opencode/persistence";
 import * as settings from "./settings";
 import type { ChatPermissionResponse } from "./opencode/types";
 
@@ -290,6 +291,59 @@ if (isProd) {
     }
   );
 
+  // -------------------------------------------------------------------------
+  // OpenCode Chat: session history (previous conversations)
+  // -------------------------------------------------------------------------
+  ipcMain.handle(
+    "opencode:chat:listSessions",
+    async (_event, projectRoot: string) => {
+      if (!projectRoot || typeof projectRoot !== "string") return [];
+      return chat.listSessions(projectRoot);
+    }
+  );
+
+  ipcMain.handle(
+    "opencode:chat:loadSession",
+    async (_event, payload: { projectRoot: string; sessionId: string }) => {
+      if (!payload?.projectRoot || !payload?.sessionId) {
+        return { ok: false as const, error: "Invalid request." };
+      }
+      const result = await chat.loadSession(payload.projectRoot, payload.sessionId);
+      if (!result) return { ok: false as const, error: "Session not found." };
+      return { ok: true as const, messages: result.messages, meta: result.meta };
+    }
+  );
+
+  ipcMain.handle(
+    "opencode:chat:newSession",
+    async (_event, projectRoot: string) => {
+      if (!projectRoot || typeof projectRoot !== "string") {
+        return { ok: false, error: "Invalid request." };
+      }
+      return chat.newSession(projectRoot);
+    }
+  );
+
+  ipcMain.handle(
+    "opencode:chat:deleteSession",
+    async (_event, sessionId: string) => {
+      if (!sessionId || typeof sessionId !== "string") {
+        return { ok: false, error: "Invalid request." };
+      }
+      return chat.deleteSession(sessionId);
+    }
+  );
+
+  ipcMain.handle(
+    "opencode:chat:renameSession",
+    async (_event, payload: { sessionId: string; title: string }) => {
+      if (!payload?.sessionId || typeof payload.title !== "string") {
+        return { ok: false, error: "Invalid request." };
+      }
+      return chat.renameSession(payload.sessionId, payload.title);
+    }
+  );
+
   // Kick off detection as soon as possible (before any window opens).
   opencode.detect().catch((err) => {
     console.error("[opencode] detection failed:", err);
@@ -299,10 +353,15 @@ if (isProd) {
   // outlive LaraLens.
   app.on("before-quit", () => {
     chat.dispose();
+    chatPersistence.closePersistence();
     opencode.dispose();
   });
 
   await app.whenReady();
+
+  // Open the SQLite chat-history database. Must run after whenReady because
+  // the DB path is derived from app.getPath("userData").
+  chatPersistence.initPersistence();
 
   // Register updater IPC handlers (no-op stubs in dev; full wiring in prod).
   // Must run after whenReady because electron-updater touches app.getPath().

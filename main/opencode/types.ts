@@ -97,3 +97,25 @@ export interface ChatMessage {
   /** Token usage for the most recent assistant turn (when available). */
   tokens?: ChatTokens;
 }
+
+// ---------------------------------------------------------------------------
+// Session history metadata — persisted conversation record.
+// One project root can have many sessions (conversations); each has its own
+// message history. Mirrored in `renderer/lib/opencode-types.ts`.
+// ---------------------------------------------------------------------------
+
+export interface ChatSessionMeta {
+  /** Local DB id (UUID). Identifies a conversation across restarts. */
+  id: string;
+  projectRoot: string;
+  /** Auto-generated from the first user message (truncated). User-editable. */
+  title: string;
+  createdAt: number;
+  lastActiveAt: number;
+  /**
+   * OpenCode server session id captured when the conversation was last active.
+   * Stored best-effort: the server may have discarded it by the time the
+   * session is restored, so loaders treat it as a hint, not a guarantee.
+   */
+  opencodeSessionId: string | null;
+}

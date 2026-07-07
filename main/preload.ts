@@ -103,6 +103,7 @@ const opencode = {
       ipcRenderer.invoke("opencode:chat:send", { projectRoot, text }) as Promise<{
         ok: boolean;
         assistantMessageId?: string;
+        sessionId?: string;
         error?: string;
       }>,
 
@@ -126,6 +127,38 @@ const opencode = {
 
     replyPermission: (projectRoot: string, permissionID: string, response: ChatPermissionResponse) =>
       ipcRenderer.invoke("opencode:chat:permission:reply", { projectRoot, permissionID, response }) as Promise<{
+        ok: boolean;
+        error?: string;
+      }>,
+
+    /** List persisted conversations for a project, most recently active first. */
+    listSessions: (projectRoot: string) =>
+      ipcRenderer.invoke("opencode:chat:listSessions", projectRoot) as Promise<ChatSessionMeta[]>,
+
+    /** Load a persisted conversation into the active session and return its messages + metadata. */
+    loadSession: (projectRoot: string, sessionId: string) =>
+      ipcRenderer.invoke("opencode:chat:loadSession", { projectRoot, sessionId }) as Promise<
+        | { ok: true; messages: ChatMessage[]; meta: ChatSessionMeta }
+        | { ok: false; error: string }
+      >,
+
+    /** Start a new, empty conversation for a project (archives the current one to history). */
+    newSession: (projectRoot: string) =>
+      ipcRenderer.invoke("opencode:chat:newSession", projectRoot) as Promise<{
+        ok: boolean;
+        error?: string;
+      }>,
+
+    /** Delete a persisted conversation (and its messages). */
+    deleteSession: (sessionId: string) =>
+      ipcRenderer.invoke("opencode:chat:deleteSession", sessionId) as Promise<{
+        ok: boolean;
+        error?: string;
+      }>,
+
+    /** Rename a persisted conversation. */
+    renameSession: (sessionId: string, title: string) =>
+      ipcRenderer.invoke("opencode:chat:renameSession", { sessionId, title }) as Promise<{
         ok: boolean;
         error?: string;
       }>,
@@ -277,6 +310,16 @@ export type ChatMessage = {
   status: ChatMessageStatus;
   error?: string;
   tokens?: ChatTokens;
+};
+
+/** Metadata for a persisted conversation (one row in the sessions table). */
+export type ChatSessionMeta = {
+  id: string;
+  projectRoot: string;
+  title: string;
+  createdAt: number;
+  lastActiveAt: number;
+  opencodeSessionId: string | null;
 };
 
 export type ChatTokens = {
