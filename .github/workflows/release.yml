@@ -62,7 +62,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Electron 42 requires Node >=22.12. Keep this aligned with the
+          # major Electron version pinned in package.json to avoid EBADENGINE
+          # warnings and Node 20 deprecation on GitHub Actions runners.
+          node-version: 22
           cache: npm
 
       # electron-builder reads the version from package.json; align it with
