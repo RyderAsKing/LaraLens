@@ -5,13 +5,9 @@ export const metadata: Metadata = {
   title: "LaraLens",
   description: "Visualize Laravel architecture as an interactive graph.",
   icons: {
-    icon: [
-      { url: "/favicon.ico", sizes: "any" },
-      { url: "/icon.png", type: "image/png" },
-      { url: "/LaraLens.svg", type: "image/svg+xml" },
-    ],
-    shortcut: "/favicon.ico",
-    apple: "/icon.png",
+    icon: "/LaraLens.svg",
+    shortcut: "/LaraLens.svg",
+    apple: "/LaraLens.svg",
   },
 };
 
